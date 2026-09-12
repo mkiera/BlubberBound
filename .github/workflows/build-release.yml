@@ -1,0 +1,65 @@
+name: Build and Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Version to validate and package without publishing'
+        required: true
+        default: 'v1.0.0'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Validate and stamp release
+        id: identity
+        env:
+          DRY_RUN_TAG: ${{ inputs.release_tag }}
+        run: |
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --tags
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            node scripts/build-identity.mjs --tag $env:GITHUB_REF_NAME --validate-placement
+          } else {
+            node scripts/build-identity.mjs --tag $env:DRY_RUN_TAG
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test and package
+        run: ./build-package.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SealSqueeze-Release
+          path: |
+            dist_installer/*
+            release-notes.md
+            build_info.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish tagged release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ steps.identity.outputs.prerelease == 'true' }}
+          files: dist_installer/*
+          fail_on_unmatched_files: true

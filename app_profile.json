@@ -1,0 +1,14 @@
+{
+  "display_name": "BlubberBound",
+  "description": "Batch media compression for SealSuite",
+  "owner": "mkiera",
+  "repository": "BlubberBound",
+  "storage_id": "SealSqueeze",
+  "package_id": "{596690BB-D4AC-4C45-A35A-5C39B158156C}",
+  "executable": "SealSqueeze.exe",
+  "installer_asset": "SealSqueeze-Setup.exe",
+  "alpha_artifact": "SealSqueeze-Setup",
+  "alpha_workflow": "build-test.yml",
+  "stable_branch": "main",
+  "beta_branch": "beta"
+}

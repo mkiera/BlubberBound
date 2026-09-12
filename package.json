@@ -1,0 +1,17 @@
+{
+  "name": "sealsqueeze",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build:frontend": "node scripts/build-frontend.mjs",
+    "build:identity": "node scripts/build-identity.mjs",
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "test": "node --test tests/*.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "semver": "^7.7.4"
+  }
+}

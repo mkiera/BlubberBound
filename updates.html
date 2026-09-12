@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>SealSuite Updates</title><link rel="stylesheet" href="style.css"><script src="desktop.js" defer></script><script src="script.js" defer></script><script src="updates.js" defer></script></head>
+<body class="utility-body">
+    <main class="updates-app">
+        <header class="updates-header"><div><h1>Updates</h1><p id="running-version">Connecting…</p><p id="checked-at">Not checked yet</p></div><button id="check-now" class="button primary" disabled>Check now</button></header>
+        <div class="channel-cards" role="group" aria-label="Update channel">
+            <button data-channel="stable" aria-pressed="true" disabled><strong>Stable</strong><span>Finished releases only. Offered automatically.</span></button>
+            <button data-channel="prerelease" aria-pressed="false" disabled><strong>Beta</strong><span>Tagged pre-releases, plus stable releases. Offered automatically.</span></button>
+            <button data-channel="alpha" aria-pressed="false" disabled><strong>Alpha</strong><span>The latest build of each branch. Manual installation only.</span></button>
+        </div>
+        <div class="update-feedback"><p id="update-message" role="status">Connecting to the desktop app…</p><progress id="download-progress" max="100" aria-label="Installer download progress" hidden></progress><p id="update-error" role="alert" hidden></p></div>
+        <section class="release-list" aria-label="Available versions"><p id="empty-releases" class="help">Check for updates to see available versions.</p><div id="release-rows"></div></section>
+        <footer class="updates-footer"><label><input id="automatic-updates" type="checkbox" checked disabled> Check for updates automatically</label><button id="close-updates" class="button secondary">Close</button></footer>
+    </main>
+</body>
+</html>

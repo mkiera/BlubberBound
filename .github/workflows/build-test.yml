@@ -1,0 +1,45 @@
+name: Build Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+
+concurrency:
+  group: build-test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Stamp branch build
+        run: node scripts/build-identity.mjs --alpha
+      - name: Read artifact identity
+        id: profile
+        run: |
+          $profile = Get-Content app_profile.json -Raw | ConvertFrom-Json
+          "artifact=$($profile.alpha_artifact)" >> $env:GITHUB_OUTPUT
+          "installer=$($profile.installer_asset)" >> $env:GITHUB_OUTPUT
+      - name: Test and package
+        run: ./build-package.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.profile.outputs.artifact }}
+          path: dist_installer/${{ steps.profile.outputs.installer }}
+          if-no-files-found: error
+          retention-days: 30
