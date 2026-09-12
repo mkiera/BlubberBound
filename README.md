@@ -1,12 +1,19 @@
 # BlubberBound
 
+<img src="icon.png" alt="BlubberBound icon" width="128">
+
 Compress local videos, audio, and still images to a size limit per file. BlubberBound uses Rust, Tauri, and FFmpeg with an HTML, CSS, and JavaScript interface.
 
-## Install
+## Download and install
 
-1. Download `SealSqueeze-Setup.exe` from the repository's Releases page.
-2. Run the installer. It installs for your Windows account without administrator access.
-3. Open BlubberBound, add files, choose a size limit, and press **Start squeezing**.
+BlubberBound is in development. The repository is private and has no published stable release yet. Current application source is on [`beta`](https://github.com/mkiera/BlubberBound/tree/beta). `main` contains the project documentation until the first stable release.
+
+1. Open [Build Test](https://github.com/mkiera/BlubberBound/actions/workflows/build-test.yml?query=branch%3Abeta) and choose a successful run from `beta`.
+2. Download the `SealSqueeze-Setup` artifact at the bottom of the run page and extract it. GitHub sign-in and repository access are required. Artifacts expire after 30 days.
+3. Run `SealSqueeze-Setup.exe`. It installs for your Windows account without administrator access.
+4. Open BlubberBound, add files, choose a size limit, and press **Start squeezing**.
+
+Tagged builds will appear on the [Releases page](https://github.com/mkiera/BlubberBound/releases). Installer and data-folder names retain `SealSqueeze` for compatibility.
 
 Microsoft Edge WebView2 Runtime is required. FFmpeg and FFprobe are included in Windows packages. The portable ZIP contains the same application. Extract the whole folder before running `SealSqueeze.exe`.
 
@@ -69,6 +76,8 @@ Replace `icon.png` to change the application icon. The build generates the Windo
 Install Node.js 22 or newer, Rust through rustup, and Visual Studio C++ Build Tools with the Windows SDK. Double-click `run.bat`, or run:
 
 ```bat
+git clone --branch beta https://github.com/mkiera/BlubberBound.git
+cd BlubberBound
 run.bat
 ```
 
@@ -112,3 +121,9 @@ Every pushed branch runs `Build Test` and uploads the `SealSqueeze-Setup` artifa
 ## License
 
 GNU GPL version 3. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
+
+## Issues and related apps
+
+Report bugs or request features in [Issues](https://github.com/mkiera/BlubberBound/issues). Include the application version, steps to reproduce, selected compression settings, and the exact error. Remove personal file paths and private media before sharing logs or samples.
+
+[FinFetcher](https://github.com/mkiera/FinFetcher) downloads media. [FlipperClipper](https://github.com/mkiera/FlipperClipper) trims video. BlubberBound compresses local files and can send completed videos to an installed FlipperClipper.
