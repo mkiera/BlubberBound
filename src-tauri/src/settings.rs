@@ -38,8 +38,8 @@ pub fn validate(input: &Value) -> Result<Value, String> {
         }
     }
     for (key, choices) in [
-        ("video_format", vec!["mp4", "webm"]),
-        ("audio_format", vec!["mp3", "opus"]),
+        ("video_format", vec!["mp4", "webm", "mkv", "mov"]),
+        ("audio_format", vec!["mp3", "opus", "m4a", "aac", "ogg"]),
         ("image_format", vec!["webp", "jpeg"]),
         ("encoder", vec!["auto", "software"]),
         ("rate_control", vec!["target", "bitrate", "quality"]),

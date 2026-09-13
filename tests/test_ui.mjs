@@ -7,6 +7,8 @@ const context = vm.createContext({module: {exports: {}}});
 vm.runInContext(fs.readFileSync(new URL('../script.js', import.meta.url), 'utf8'), context);
 const {formatBytes, savingsLabel, validateSettings, advancedDefaults, previewRange, previewSettingsChanged, canReplaceOutput} = context.module.exports;
 
+
+
 test('formats sizes without misleading zero values', () => {
     assert.equal(formatBytes(0), '0 B');
     assert.equal(formatBytes(null), 'Unknown size');
@@ -42,7 +44,7 @@ test('every static DOM lookup resolves in its window', () => {
 test('updates precedes accessible settings and channels retain stable order', () => {
     const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     assert.ok(html.indexOf('id="open-updates"') < html.indexOf('id="open-settings"'));
-    assert.match(html, /id="open-settings"[^>]+aria-label="Compression settings"/);
+    assert.match(html, /id="open-settings"[^>]+aria-label="Settings"/);
     const updates = fs.readFileSync(new URL('../updates.html', import.meta.url), 'utf8');
     assert.deepEqual([...updates.matchAll(/data-channel="([^"]+)"/g)].map(match => match[1]), ['stable', 'prerelease', 'alpha']);
 });
@@ -140,14 +142,14 @@ test('stale preview checks use effective settings and ignore output folder', () 
     assert.equal(previewSettingsChanged({...base, advanced_enabled: true}, {...base, advanced_enabled: true, scale_percent: 50}), true);
 });
 
-test('replacing a previous squeeze requires the same output extension', () => {
+test('replacing a previous output requires the same output extension', () => {
     assert.equal(canReplaceOutput({kind: 'video', output: 'C:/output/clip.MP4'}, {video_format: 'mp4'}), true);
     assert.equal(canReplaceOutput({kind: 'video', output: 'C:/output/clip.mp4'}, {video_format: 'webm'}), false);
     assert.equal(canReplaceOutput({kind: 'image', output: 'photo.jpg'}, {image_format: 'jpeg'}), true);
     assert.equal(canReplaceOutput({kind: 'image'}, {image_format: 'jpeg'}), false);
     const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-    for (const label of ['Another copy', 'Replace previous squeeze', 'Cancel']) assert.ok(html.includes(label));
+    for (const label of ['Another copy', 'Replace previous output', 'Cancel']) assert.ok(html.includes(label));
     const script = fs.readFileSync(new URL('../script.js', import.meta.url), 'utf8');
-    assert.match(script, /!hasPending && hasCompleted \? 'Squeeze again '/);
+    assert.match(script, /!hasPending && hasCompleted \? 'Compress again '/);
     assert.match(script, /command\('rerun_job', \$\('rerun-file'\)\.value, mode\)/);
 });

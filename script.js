@@ -69,7 +69,7 @@ if (typeof module !== 'undefined') module.exports = {formatBytes, savingsLabel, 
 
 if (typeof document !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1' && !window.desktop) {
     const previewUpdates = {
-        branding: {display_name: 'SealSuite preview'},
+        branding: {display_name: 'BlubberBound'},
         identity: {version: '1.0.0', commit: '', branch: ''}, channel: 'stable', automatic: true,
         checked_at: Date.now() / 1000, checking: false, status: 'Demo preview. No files are downloaded or installed.',
         rows: [
@@ -84,9 +84,9 @@ if (typeof document !== 'undefined' && new URLSearchParams(window.location.searc
         branding: previewUpdates.branding, version: '1.0.0', tools: {ffmpeg: true, ffprobe: true},
         settings: {target_mb: 25, video_format: 'mp4', audio_format: 'mp3', image_format: 'webp', max_height: 0, encoder: 'auto', output_dir: ''},
         jobs: [
-            {id: 'video', name: 'A quiet morning at the beach.mp4', source: 'Demo files / beach.mp4', kind: 'video', duration: 120, original_size: 86500000, status: 'completed', percent: 100, stage: 'Finished', output: 'Demo files / beach-squeezed.mp4', output_size: 24100000},
+            {id: 'video', name: 'A quiet morning at the beach.mp4', source: 'Demo files / beach.mp4', kind: 'video', duration: 120, original_size: 86500000, status: 'completed', percent: 100, stage: 'Finished', output: 'Demo files / beach-compressed.mp4', output_size: 24100000},
             {id: 'audio', name: 'Ocean ambience.wav', source: 'Demo files / ocean.wav', kind: 'audio', duration: 90, original_size: 52000000, status: 'pending', percent: 0, stage: ''},
-            {id: 'image', name: 'An exceptionally long holiday photograph filename with spaces and punctuation.jpg', source: 'Demo files / photograph.jpg', kind: 'image', original_size: 8300000, status: 'failed', percent: 0, stage: '', error: 'Example error: the requested limit is too small. Increase the limit and retry.'},
+            {id: 'image', name: 'An exceptionally long holiday photograph filename with spaces and punctuation.jpg', source: 'Demo files / photograph.jpg', kind: 'image', original_size: 8300000, status: 'failed', percent: 0, stage: '', error: 'Example error: the source file is unavailable. Check its location and retry.'},
         ], running: false, flipperclipper: true, updates: previewUpdates,
     };
     const clone = value => JSON.parse(JSON.stringify(value));
@@ -133,14 +133,15 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
     let polling = false;
     let settingsDirty = false;
     let completionKey = '';
-    let productName = 'SealSuite media compressor';
+    let productName = 'File compressor';
     let previewJobId = null;
     let renderedPreviewKey = '';
+    let preferredEncoder = null;
 
     function message(text) {
         $('notice-text').textContent = text;
         $('notice').hidden = !text;
-        for (const [dialog, error] of [['advanced-dialog', 'advanced-error'], ['preview-dialog', 'preview-error'], ['rerun-dialog', 'rerun-error']]) {
+        for (const [dialog, error] of [['app-settings-dialog', 'settings-error'], ['advanced-dialog', 'advanced-error'], ['preview-dialog', 'preview-error'], ['rerun-dialog', 'rerun-error']]) {
             if ($(dialog).open) { $(error).textContent = text; $(error).hidden = !text; }
         }
     }
@@ -157,8 +158,8 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
             video_format: $('video-format').value,
             audio_format: $('audio-format').value,
             image_format: $('image-format').value,
-            max_height: Number($('max-height').value),
-            encoder: $('encoder').value,
+            max_height: $('max-height').value === 'custom' ? 0 : Number($('max-height').value),
+            encoder: preferredEncoder ?? $('encoder').value,
         });
     }
 
@@ -183,10 +184,32 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         $('crf').disabled = !enabled || mode !== 'quality';
         $('target-mb').disabled = !sizeMode;
         document.querySelectorAll('[data-target]').forEach(button => { button.disabled = !sizeMode; });
-        $('encoder').disabled = enabled && mode === 'quality';
-        $('target-help').textContent = sizeMode ? 'Smaller limits trade detail for size. Files that cannot meet your limit will report an error.' : 'Advanced mode controls quality or bitrate. Output size is not limited.';
-        $('rate-help').textContent = ({target: 'Fit size limit adjusts quality to meet the size limit. Audio bitrate is an upper limit.', bitrate: 'Uses your video and audio bitrates. Output size is not limited. Image quality is set separately.', quality: 'Uses software video quality and your audio bitrate. Output size is not limited. Image quality is set separately.'})[mode];
-        $('open-advanced').textContent = enabled ? 'Advanced: on' : 'Advanced';
+        const forceSoftware = enabled && mode === 'quality';
+        $('encoder').disabled = forceSoftware;
+        if (forceSoftware) {
+            preferredEncoder ??= $('encoder').value;
+            $('encoder').value = 'software';
+        } else if (preferredEncoder !== null) {
+            $('encoder').value = preferredEncoder;
+            preferredEncoder = null;
+        }
+        const webp = $('image-format').value === 'webp';
+        $('image-lossless').disabled = !enabled || !webp;
+        $('image-quality').disabled = !enabled || (webp && $('image-lossless').checked);
+        const opus = $('audio-format').value === 'opus' || ($('video-format').value === 'webm' && !$('mute-audio').checked);
+        for (const option of $('audio-sample-rate').options) option.disabled = opus && !['0', '48000'].includes(option.value);
+        document.querySelectorAll('#advanced-controls input, #advanced-controls select').forEach(input => {
+            const label = input.closest('label');
+            if (label) label.classList.toggle('inactive-controls', input.disabled);
+        });
+        $('target-help').textContent = sizeMode ? 'Smaller limits trade detail for size. If the limit cannot be met, the smallest output produced is saved with a warning.' : 'Advanced mode controls quality or bitrate. Output size is not limited.';
+        const customScale = enabled && (Number($('scale-percent').value) !== 100 || Number($('output-width').value) > 0 || Number($('output-height').value) > 0);
+        $('custom-resolution').hidden = !customScale;
+        if (customScale && $('max-height').value === '0') $('max-height').value = 'custom';
+        if (!customScale && $('max-height').value === 'custom') $('max-height').value = '0';
+        $('rate-help').textContent = !enabled ? 'Basic compression is active. Enable advanced settings to edit these controls.' : ({target: 'Size limit is active. Video bitrate and CRF are automatic. Audio bitrate is a ceiling. Image quality may be reduced to fit.', bitrate: 'Size limit and CRF are off. Video and audio use the bitrates below. Images use Image quality. Output size can be larger than the source.', quality: 'Size limit and video bitrate are off. Video uses CRF with software encoding. Audio still uses Audio bitrate. Images use Image quality. Output size varies with content.'})[mode];
+        $('open-advanced').textContent = enabled ? 'Advanced: on' : 'Advanced…';
+        $('open-advanced').classList.toggle('advanced-active', enabled);
         $('scale-slider').value = $('scale-percent').value;
     }
 
@@ -299,12 +322,12 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         row.innerHTML = '<div class="job-main"><span class="kind-icon" aria-hidden="true"></span><div class="job-info"><h3 class="job-name"></h3><p class="job-meta"></p></div><span class="job-status"></span></div><progress max="100"></progress><p class="job-stage"></p><p class="job-error"></p><p class="job-output"></p><div class="job-actions"></div>';
         const actions = row.querySelector('.job-actions');
         const buttons = {};
-        for (const [action, label] of [['quality_preview', 'Preview quality'], ['squeeze_again', 'Squeeze again'], ['open_output', 'Open file'], ['show_output', 'Show in folder'], ['open_in_clipper', 'Pass to FlipperClipper'], ['retry_job', 'Retry'], ['remove_job', 'Remove']]) {
+        for (const [action, label] of [['quality_preview', 'Preview quality'], ['compress_again', 'Compress again'], ['open_output', 'Open file'], ['show_output', 'Show in folder'], ['open_in_clipper', 'Pass to FlipperClipper'], ['retry_job', 'Retry'], ['remove_job', 'Remove']]) {
             const button = document.createElement('button');
             button.className = 'text-button';
             button.textContent = label;
             button.setAttribute('aria-label', `${label}: ${job.name}`);
-            button.addEventListener('click', () => action === 'quality_preview' ? showPreview(job.id) : action === 'squeeze_again' ? showRerun(job.id) : command(action, job.id));
+            button.addEventListener('click', () => action === 'quality_preview' ? showPreview(job.id) : action === 'compress_again' ? showRerun(job.id) : command(action, job.id));
             actions.append(button);
             buttons[action] = button;
         }
@@ -337,7 +360,7 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         buttons.show_output.hidden = !done || !job.output;
         buttons.open_in_clipper.hidden = !done || !job.output || job.kind !== 'video' || !state.flipperclipper;
         buttons.retry_job.hidden = !['failed', 'cancelled'].includes(job.status);
-        buttons.squeeze_again.hidden = !done || !job.output;
+        buttons.compress_again.hidden = !done || !job.output;
         buttons.remove_job.hidden = active.has(job.status);
         for (const button of Object.values(buttons)) button.disabled = busy > 0 || !ready;
         const processing = state.running || state.preview?.status === 'running';
@@ -345,7 +368,7 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         buttons.quality_preview.disabled ||= processing || !state.tools?.ffmpeg || !state.tools?.ffprobe;
         buttons.remove_job.disabled ||= processing;
         buttons.retry_job.disabled ||= processing;
-        buttons.squeeze_again.disabled ||= processing;
+        buttons.compress_again.disabled ||= processing;
     }
 
     function render(next) {
@@ -365,6 +388,7 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         const available = ready && !busy;
         const previewRunning = next.preview?.status === 'running';
         const processing = next.running || previewRunning;
+        $('settings-advanced').disabled = !available || processing;
         const hasPending = next.jobs.some(job => job.status === 'pending');
         const hasCompleted = next.jobs.some(job => job.status === 'completed' && job.output);
         const hasActive = next.jobs.some(job => active.has(job.status));
@@ -381,7 +405,7 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         $('save-advanced').disabled = !available || processing;
         $('clear-finished').disabled = !available || processing || !next.jobs.some(job => terminal.has(job.status));
         $('start-queue').disabled = !available || (!hasPending && !hasCompleted) || processing || !next.tools?.ffmpeg || !next.tools?.ffprobe;
-        $('start-queue').firstChild.textContent = !hasPending && hasCompleted ? 'Squeeze again ' : 'Start squeezing ';
+        $('start-queue').firstChild.textContent = !hasPending && hasCompleted ? 'Compress again ' : 'Start compressing ';
         $('start-queue').hidden = next.running;
         $('running-actions').hidden = !next.running;
         $('cancel-current').disabled = !available || !hasActive;
@@ -392,7 +416,7 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         const toolsMissing = !next.tools?.ffmpeg || !next.tools?.ffprobe;
         $('tools-status').textContent = toolsMissing ? 'Media tools missing. Install FFmpeg and FFprobe, then restart.' : '';
         $('tools-status').hidden = !toolsMissing;
-        const statusText = next.running ? `Squeezing / ${completed} of ${count} complete` : count ? `${completed} complete${failed ? ` / ${failed} failed` : ''}${hasPending ? ' / Ready to start' : ''}` : 'Your queue is ready for files.';
+        const statusText = next.running ? `Compressing / ${completed} of ${count} complete` : count ? `${completed} complete${failed ? ` / ${failed} failed` : ''}${hasPending ? ' / Ready to start' : ''}` : 'Your queue is ready for files.';
         if ($('queue-status').textContent !== statusText) $('queue-status').textContent = statusText;
         const ids = new Set(next.jobs.map(job => job.id));
         for (const [id, entry] of rows) {
@@ -422,6 +446,10 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
     function renderUpdates(updates) {
         $('open-updates').disabled = !ready || busy > 0;
         if (!updates) return;
+        $('settings-channel').disabled = !ready || busy > 0;
+        $('settings-automatic').disabled = !ready || busy > 0;
+        if (document.activeElement !== $('settings-channel')) $('settings-channel').value = updates.channel || 'stable';
+        $('settings-automatic').checked = Boolean(updates.automatic);
         const identity = updates.identity || {};
         if (identity.version) $('version').textContent = `${identity.version}${identity.branch && identity.commit ? `, ${identity.commit.slice(0, 7)}` : ''}`;
         const downloading = Boolean(updates.download?.active);
@@ -499,8 +527,21 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
 
     $('dismiss-notice').addEventListener('click', () => message(''));
     $('open-settings').addEventListener('click', () => {
-        $('settings-title').scrollIntoView({block: 'nearest'});
-        $('settings-title').focus();
+        $('settings-error').hidden = true;
+        $('app-settings-dialog').showModal();
+    });
+    $('close-settings').addEventListener('click', () => $('app-settings-dialog').close());
+    $('settings-channel').addEventListener('change', async () => {
+        await command('set_update_channel', $('settings-channel').value);
+        await poll();
+    });
+    $('settings-automatic').addEventListener('change', async () => {
+        await command('set_automatic_updates', $('settings-automatic').checked);
+        await poll();
+    });
+    $('settings-advanced').addEventListener('click', () => {
+        $('app-settings-dialog').close();
+        $('open-advanced').click();
     });
     $('open-updates').addEventListener('click', () => command('open_updates'));
     $('update-details').addEventListener('click', () => command('open_updates'));
@@ -524,7 +565,15 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
     });
     $('settings-form').addEventListener('submit', event => event.preventDefault());
     $('settings-form').addEventListener('input', () => { settingsDirty = true; renderPresets(); });
-    $('settings-form').addEventListener('change', () => { settingsDirty = true; saveSettings(); });
+    $('settings-form').addEventListener('change', event => {
+        if (event.target.id === 'max-height' && event.target.value === '0') {
+            $('scale-percent').value = '100';
+            $('scale-slider').value = '100';
+            $('output-width').value = '0';
+            $('output-height').value = '0';
+        }
+        settingsDirty = true; resetInactiveSettings(); renderAdvanced(); saveSettings();
+    });
     document.querySelectorAll('[data-target]').forEach(button => button.addEventListener('click', () => {
         $('target-mb').value = button.dataset.target;
         settingsDirty = true;
@@ -532,8 +581,18 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         saveSettings();
     }));
     $('open-advanced').addEventListener('click', () => { $('advanced-error').hidden = true; $('advanced-dialog').showModal(); });
+    function resetInactiveSettings() {
+        const mode = $('rate-control').value;
+        if (mode !== 'bitrate') $('video-bitrate').value = advancedDefaults.video_bitrate_kbps;
+        if (mode !== 'quality') $('crf').value = advancedDefaults.crf;
+        if ($('image-format').value !== 'webp') $('image-lossless').checked = false;
+        if ($('image-lossless').checked) $('image-quality').value = advancedDefaults.image_quality;
+        const opus = $('audio-format').value === 'opus' || ($('video-format').value === 'webm' && !$('mute-audio').checked);
+        if (opus && !['0', '48000'].includes($('audio-sample-rate').value)) $('audio-sample-rate').value = '0';
+    }
     $('advanced-form').addEventListener('input', event => {
         if (event.target.id === 'scale-slider') $('scale-percent').value = event.target.value;
+        if (['rate-control', 'advanced-enabled', 'image-lossless', 'mute-audio'].includes(event.target.id)) resetInactiveSettings();
         settingsDirty = true;
         renderAdvanced();
     });

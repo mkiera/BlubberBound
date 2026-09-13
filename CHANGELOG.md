@@ -4,6 +4,13 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+- Keep original resolution unless the user selects a resolution limit or manual scaling.
+- Save the smallest output produced when a size limit cannot be met, with a warning showing the actual size.
+- Use Compress throughout the interface and add a file-compressor description below the title.
+- Open application settings from the gear button and make Advanced a distinct button.
+- Explain each compression mode, disable unused controls, reset inactive quality and bitrate values, and restore the preferred encoder when leaving constant-quality mode.
+- Add MKV and MOV video output, plus M4A, AAC, and Ogg audio output.
+
 ## 1.0.0-beta.3 - 2026-09-12
 
 - Keep the GPLv3 license without requiring acceptance during installation.

@@ -1279,10 +1279,10 @@ mod tests {
         updater.snapshot()
     }
     fn profile() -> Value {
-        json!({"owner":"mkiera","repository":"SealSqueeze","display_name":"SealSqueeze","installer_asset":"SealSqueeze-Setup.exe","alpha_artifact":"SealSqueeze-Setup","alpha_workflow":"build-test.yml"})
+        json!({"owner":"mkiera","repository":"BlubberBound","display_name":"BlubberBound","installer_asset":"BlubberBound-Setup.exe","alpha_artifact":"BlubberBound-Setup","alpha_workflow":"build-test.yml"})
     }
     fn release(v: &str, id: u64) -> Value {
-        json!({"id":id,"tag_name":format!("v{v}"),"body":"- Change.\r\n<!-- app-notes-end -->\nInstall","assets":[{"id":id,"name":"SealSqueeze-Setup.exe","size":100,"browser_download_url":"https://github.com/file"}]})
+        json!({"id":id,"tag_name":format!("v{v}"),"body":"- Change.\r\n<!-- app-notes-end -->\nInstall","assets":[{"id":id,"name":"BlubberBound-Setup.exe","size":100,"browser_download_url":"https://github.com/file"}]})
     }
     #[test]
     fn stable_and_beta_ordering() {
@@ -1331,18 +1331,18 @@ mod tests {
             assert!(!safe_url(url), "{url}");
         }
         for name in [
-            "../SealSqueeze-Setup.exe",
-            "a\\SealSqueeze-Setup.exe",
+            "../BlubberBound-Setup.exe",
+            "a\\BlubberBound-Setup.exe",
             ".hidden-Setup.exe",
             "bad name-Setup.exe",
-            "SealSqueeze.exe",
+            "BlubberBound.exe",
         ] {
             assert!(!safe_installer(name));
         }
         assert!(safe_url(
             "https://release-assets.githubusercontent.com/f?signature=value"
         ));
-        assert!(safe_installer("SealSqueeze-Setup.exe"));
+        assert!(safe_installer("BlubberBound-Setup.exe"));
     }
     #[test]
     fn redirects_strip_cross_host_credentials_without_restoring_them() {
@@ -1810,9 +1810,9 @@ mod tests {
         let archive = folder.path().join("input.zip");
         let mut writer = zip::ZipWriter::new(File::create(&archive).unwrap());
         for name in [
-            "../SealSqueeze-Setup.exe",
-            "folder/SealSqueeze-Setup.exe",
-            "SealSqueeze-Setup.exe",
+            "../BlubberBound-Setup.exe",
+            "folder/BlubberBound-Setup.exe",
+            "BlubberBound-Setup.exe",
         ] {
             writer
                 .start_file(name, zip::write::SimpleFileOptions::default())
@@ -1824,7 +1824,7 @@ mod tests {
         extract_installer(
             &archive,
             &dest,
-            "SealSqueeze-Setup.exe",
+            "BlubberBound-Setup.exe",
             &AtomicBool::new(false),
             &|_| {},
         )
@@ -1838,7 +1838,7 @@ mod tests {
         let mut writer = zip::ZipWriter::new(File::create(&archive).unwrap());
         writer
             .start_file(
-                "SealSqueeze-Setup.exe",
+                "BlubberBound-Setup.exe",
                 zip::write::SimpleFileOptions::default(),
             )
             .unwrap();
@@ -1847,7 +1847,7 @@ mod tests {
         assert!(extract_installer(
             &archive,
             &folder.path().join("out.part"),
-            "SealSqueeze-Setup.exe",
+            "BlubberBound-Setup.exe",
             &AtomicBool::new(true),
             &|_| {}
         )

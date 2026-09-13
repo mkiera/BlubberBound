@@ -281,7 +281,7 @@ async fn desktop_command(
 fn main() {
     let profile: Value =
         serde_json::from_str(include_str!("../../app_profile.json")).expect("Invalid app profile");
-    let version = option_env!("SQUEEZE_BUILD_VERSION")
+    let version = option_env!("BLUBBERBOUND_BUILD_VERSION")
         .unwrap_or(include_str!("../../version.txt").trim())
         .to_string();
     let mut args = std::env::args().skip(1);
@@ -304,7 +304,7 @@ fn main() {
             std::fs::create_dir_all(&directory)?;
             let queue=Controller::new(directory.join("state.json"));if !files.is_empty(){queue.add_paths(files);}
             let updater=updates::Updater::new(profile.clone(),directory,version.clone());
-            if let Some(identity)=option_env!("SQUEEZE_BUILD_IDENTITY_JSON").and_then(|value|serde_json::from_str(value).ok()){updater.set_identity(identity);}
+            if let Some(identity)=option_env!("BLUBBERBOUND_BUILD_IDENTITY_JSON").and_then(|value|serde_json::from_str(value).ok()){updater.set_identity(identity);}
             updater.start();
             if let Some(window)=app.get_webview_window("main"){window.set_title(profile["display_name"].as_str().unwrap_or("BlubberBound"))?;}
             app.manage(Desktop{queue,updater,profile,version});

@@ -12,7 +12,7 @@ fn main() {
             })
         });
     let version = identity["version"].as_str().expect("Missing build version");
-    println!("cargo:rustc-env=SQUEEZE_BUILD_VERSION={version}");
-    println!("cargo:rustc-env=SQUEEZE_BUILD_IDENTITY_JSON={identity}");
+    println!("cargo:rustc-env=BLUBBERBOUND_BUILD_VERSION={version}");
+    println!("cargo:rustc-env=BLUBBERBOUND_BUILD_IDENTITY_JSON={identity}");
     tauri_build::build()
 }

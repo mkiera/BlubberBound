@@ -457,7 +457,7 @@ fn dimensions(info: &Value, options: &Value, bitrate: f64, even: bool) -> (u32, 
             scale = scale.min(limit / current);
         }
     }
-    if bitrate > 0.0 && !explicit(options) {
+    if bitrate > 0.0 && n(&options["max_height"]) > 0.0 && !explicit(options) {
         let fps = if n(&options["fps"]) > 0.0 {
             n(&info["fps"]).min(n(&options["fps"]))
         } else {
@@ -465,7 +465,11 @@ fn dimensions(info: &Value, options: &Value, bitrate: f64, even: bool) -> (u32, 
         };
         scale = scale.min((bitrate / fps.max(1.0) / 0.045 / (w * h)).sqrt());
     }
-    let unit = if even { 2 } else { 1 };
+    let unit = if even && (explicit(options) || n(&options["max_height"]) > 0.0) {
+        2
+    } else {
+        1
+    };
     (
         ((w * scale) as u32 / unit * unit).max(unit),
         ((h * scale) as u32 / unit * unit).max(unit),
@@ -483,8 +487,9 @@ fn plan(info: &Value, target: f64, o: &Value) -> Result<Value, String> {
                 ar = (n(&o["audio_bitrate_kbps"]) * 1000.0).min((rate * 0.2).floor());
             }
             vr = (rate - ar).floor().min(100_000_000.0);
-            if vr < 12000.0 || (has_audio && ar < 12000.0) {
-                return Err("The size limit is too small for this duration. Increase the target size or trim the source first.".into());
+            vr = vr.max(12000.0);
+            if has_audio {
+                ar = ar.max(12000.0);
             }
         } else {
             ar = rate.floor().min(if b(o, "advanced_enabled") {
@@ -511,14 +516,13 @@ fn plan(info: &Value, target: f64, o: &Value) -> Result<Value, String> {
             .map(|&v| v as f64)
             .filter(|&v| v <= ar)
             .last()
-            .unwrap_or(0.0);
+            .unwrap_or(8000.0);
         }
-        if ar < 6000.0 {
-            return Err(
-                "The size limit is too small for this audio duration. Increase the target size."
-                    .into(),
-            );
-        }
+        ar = ar.max(if s(o, "audio_format") == "ogg" {
+            32000.0
+        } else {
+            6000.0
+        });
     }
     let (w, h) = if video {
         dimensions(
@@ -565,16 +569,24 @@ fn audio_args(
     if codec == "libopus" && sr != 48000.0 {
         return Err("Opus requires 48,000 Hz from the available sample rates. Choose Automatic or 48,000 Hz.".into());
     }
+    let rate = if s(o, "rate_control") == "target" && codec == "libmp3lame" && sr >= 32000.0 {
+        rate.max(32000.0)
+    } else {
+        rate
+    };
     if codec == "libmp3lame"
         && ((sr == 22050.0 && rate > 160000.0) || (sr >= 32000.0 && rate < 32000.0))
     {
         return Err("This MP3 bitrate and sample rate cannot be combined. Choose Automatic sample rate or change the bitrate.".into());
     }
+    if codec == "libvorbis" && s(o, "rate_control") == "target" && rate < 48000.0 * channels {
+        add(args, &["-q:a", "-1"]);
+    } else {
+        add(args, &["-b:a", &(rate as u64).to_string()]);
+    }
     add(
         args,
         &[
-            "-b:a",
-            &(rate as u64).to_string(),
             "-ac",
             &(channels as u32).to_string(),
             "-ar",
@@ -637,10 +649,10 @@ fn preset_args(args: &mut Vec<String>, codec: &str, o: &Value) {
     }
 }
 fn can_copy(source: &Path, target: f64, o: &Value, info: &Value) -> bool {
-    let (v, a) = if s(o, "video_format") == "mp4" {
-        ("h264", "aac")
-    } else {
+    let (v, a) = if s(o, "video_format") == "webm" {
         ("vp9", "opus")
+    } else {
+        ("h264", "aac")
     };
     !b(o, "advanced_enabled")
         && s(info, "kind") == "video"
@@ -686,6 +698,11 @@ fn encode_media(
         return Ok("copy".into());
     }
     let mut o = options.clone();
+    let original_odd = (!explicit(&o) && n(&o["max_height"]) == 0.0)
+        && (n(&info["width"]) as u32 % 2 != 0 || n(&info["height"]) as u32 % 2 != 0);
+    if original_odd {
+        o["encoder"] = json!("software");
+    }
     if preserve {
         o["rate_control"] = json!("quality");
         o["crf"] = json!(0);
@@ -695,22 +712,19 @@ fn encode_media(
         .ok_or("FFmpeg was not found. Put ffmpeg and ffprobe in the tools folder.")?;
     let duration = sample.map(|v| v.1).unwrap_or(n(&info["duration"]));
     let video = s(info, "kind") == "video";
-    if s(&o, "rate_control") == "target" && target < 2048.0 {
-        return Err(
-            "The size limit is too small for a playable media file. Increase the target size."
-                .into(),
-        );
-    }
     let mut codec = if video {
         if s(&o, "video_format") == "webm" {
             "libvpx-vp9"
         } else {
             "libx264"
         }
-    } else if s(&o, "audio_format") == "mp3" {
-        "libmp3lame"
     } else {
-        "libopus"
+        match s(&o, "audio_format") {
+            "mp3" => "libmp3lame",
+            "m4a" | "aac" => "aac",
+            "ogg" => "libvorbis",
+            _ => "libopus",
+        }
     }
     .to_string();
     if video && codec == "libx264" && s(&o, "encoder") == "auto" {
@@ -718,6 +732,8 @@ fn encode_media(
     }
     let p = plan(info, target, &o)?;
     let mut factor = 1.0;
+    let best_output = output.with_extension("best");
+    let mut best_size = f64::INFINITY;
     for attempt in 0..6 {
         check(cancel)?;
         let mut args = vec![];
@@ -745,13 +761,8 @@ fn encode_media(
             add(&mut args, &["-map_metadata:s", "-1"]);
         }
         if video {
-            let ar = (n(&p["audio_rate"]) * factor).floor();
-            let vr = (n(&p["video_rate"]) * factor).floor();
-            if s(&o, "rate_control") == "target"
-                && (vr < 12000.0 || (b(&p, "has_audio") && ar < 12000.0))
-            {
-                return Err("The size limit is too small for this duration. Increase the target size or trim the source first.".into());
-            }
+            let ar = (n(&p["audio_rate"]) * factor).floor().max(12000.0);
+            let vr = (n(&p["video_rate"]) * factor).floor().max(12000.0);
             let (w, h) = dimensions(
                 info,
                 &o,
@@ -776,6 +787,8 @@ fn encode_media(
                     "-pix_fmt",
                     if preserve {
                         s(info, "pixel_format")
+                    } else if original_odd {
+                        "yuv444p"
                     } else {
                         "yuv420p"
                     },
@@ -826,7 +839,7 @@ fn encode_media(
             } else {
                 add(&mut args, &["-an"]);
             }
-            if s(&o, "video_format") == "mp4" {
+            if ["mp4", "mov"].contains(&s(&o, "video_format")) {
                 add(&mut args, &["-movflags", "+faststart"]);
             }
         } else {
@@ -882,9 +895,14 @@ fn encode_media(
         if sample.is_some() || s(&o, "rate_control") != "target" || size <= target {
             return Ok(codec);
         }
+        if size < best_size {
+            fs::copy(output, &best_output).map_err(|e| e.to_string())?;
+            best_size = size;
+        }
         factor *= 0.8_f64.min(target / size * 0.85);
     }
-    Err("The encoder could not fit this file within the size limit. Increase the target size or trim the source first.".into())
+    fs::copy(&best_output, output).map_err(|e| e.to_string())?;
+    Ok(codec)
 }
 fn image_metadata(path: &Path) -> Result<(Vec<u8>, Vec<u8>), String> {
     let data = fs::read(path).map_err(|e| e.to_string())?;
@@ -1138,7 +1156,9 @@ fn encode_image(
     } else {
         95
     };
-    let encode = |quality: i32, w: u32, h: u32| -> Result<u64, String> {
+    let best_output = output.with_extension("best");
+    let mut smallest = u64::MAX;
+    let mut encode = |quality: i32, w: u32, h: u32| -> Result<u64, String> {
         check(cancel)?;
         let mut args = vec![];
         add(
@@ -1189,7 +1209,12 @@ fn encode_image(
             None,
         )?;
         write_image_metadata(output, &exif, &icc, w, h)?;
-        Ok(fs::metadata(output).map_err(|e| e.to_string())?.len())
+        let size = fs::metadata(output).map_err(|e| e.to_string())?.len();
+        if size > 0 && size < smallest {
+            fs::copy(output, &best_output).map_err(|e| e.to_string())?;
+            smallest = size;
+        }
+        Ok(size)
     };
     if s(o, "rate_control") != "target" {
         encode(max, width, height)?;
@@ -1213,13 +1238,14 @@ fn encode_image(
             encode(q, width, height)?;
             return Ok(if jpeg { "mjpeg" } else { "libwebp" }.into());
         }
-        if (width == 1 && height == 1) || explicit(o) {
+        if (width == 1 && height == 1) || explicit(o) || n(&o["max_height"]) == 0.0 {
             break;
         }
         width = ((width as f64 * 0.75) as u32).max(1);
         height = ((height as f64 * 0.75) as u32).max(1);
     }
-    Err("The size limit is too small for this image format. Increase the target size.".into())
+    fs::copy(&best_output, output).map_err(|e| e.to_string())?;
+    Ok(if jpeg { "mjpeg" } else { "libwebp" }.into())
 }
 pub fn compress(
     source: &Path,
@@ -1311,12 +1337,8 @@ fn export(
     };
     check(cancel)?;
     let size = fs::metadata(&output).map_err(|e| e.to_string())?.len();
-    if size == 0
-        || (s(&o, "rate_control") == "target"
-            && (sample.is_none() || s(&info, "kind") == "image")
-            && size as f64 > target)
-    {
-        return Err("The output did not meet the requested size limit.".into());
+    if size == 0 {
+        return Err("The encoder produced an empty file.".into());
     }
     let output_info = probe_cancel(&output, cancel)?;
     progress(99.0, "Saving output");
@@ -1344,6 +1366,12 @@ fn export(
     #[cfg(not(windows))]
     fs::hard_link(&output, destination).map_err(|e| e.to_string())?;
     let mut result = json!({"path":destination,"size":size,"original_size":info["size"],"kind":info["kind"],"encoder":codec,"width":output_info["width"],"height":output_info["height"],"duration_seconds":output_info["duration"],"fps":output_info["fps"]});
+    if s(&o, "rate_control") == "target"
+        && (sample.is_none() || s(&info, "kind") == "image")
+        && size as f64 > target
+    {
+        result["warning"] = json!(format!("Saved the smallest output produced with these settings ({:.3} MB). It exceeds your {:.3} MB size limit.", size as f64 / 1_000_000.0, target / 1_000_000.0));
+    }
     if let Some((start, duration)) = sample {
         let image = s(&info, "kind") == "image";
         result["start_seconds"] = json!(if image { 0.0 } else { start });
@@ -1516,6 +1544,156 @@ mod tests {
         )
         .unwrap_err()
         .contains("Opus requires"));
+    }
+    #[test]
+    fn original_resolution_survives_export_and_preview() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = fixture(
+            tmp.path(),
+            "source.mkv",
+            "testsrc=size=161x121:rate=10",
+            &["-t", "2", "-c:v", "ffv1"],
+        );
+        let image = fixture(
+            tmp.path(),
+            "image.png",
+            "testsrc=size=161x121",
+            &["-frames:v", "1"],
+        );
+        {
+            let options = json!({"target_mb":0.0001,"encoder":"software"});
+            for (source, extension) in [(&source, "mp4"), (&image, "webp")] {
+                let result = compress(
+                    source,
+                    &tmp.path().join(format!("output.{extension}")),
+                    &options,
+                    &AtomicBool::new(false),
+                    |_, _| {},
+                )
+                .unwrap();
+                assert_eq!(result["width"], 161, "{result}");
+                assert_eq!(result["height"], 121, "{result}");
+                assert!(result["warning"].is_string());
+            }
+            let sample = preview(
+                &source,
+                &tmp.path().join("preview.mp4"),
+                &options,
+                &AtomicBool::new(false),
+                |_, _| {},
+                0.0,
+                1.0,
+            )
+            .unwrap();
+            assert_eq!(sample["width"], 161);
+            assert_eq!(sample["height"], 121);
+        }
+    }
+    #[test]
+    fn tiny_media_limits_save_playable_outputs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let audio = fixture(
+            tmp.path(),
+            "source.wav",
+            "sine=frequency=440:sample_rate=48000",
+            &["-t", "1"],
+        );
+        let video = fixture(
+            tmp.path(),
+            "source.mp4",
+            "testsrc2=size=160x120:rate=10",
+            &["-t", "1", "-c:v", "libx264"],
+        );
+        for (kind, source, formats) in [
+            ("audio", &audio, vec!["mp3", "opus", "m4a", "aac", "ogg"]),
+            ("video", &video, vec!["mp4", "webm", "mkv", "mov"]),
+        ] {
+            for format in formats {
+                let mut options = json!({"target_mb":0.0001,"encoder":"software"});
+                options[format!("{kind}_format")] = json!(format);
+                let output = tmp.path().join(format!("tiny.{format}"));
+                let result = compress(
+                    source,
+                    &output,
+                    &options,
+                    &AtomicBool::new(false),
+                    |_, _| {},
+                )
+                .unwrap();
+                assert!(n(&result["size"]) > 100.0);
+                assert!(s(&result, "warning").contains("size limit"));
+                assert_eq!(probe(&output).unwrap()["kind"], kind);
+            }
+        }
+    }
+    #[test]
+    fn additional_formats_export_and_preview() {
+        let tmp = tempfile::tempdir().unwrap();
+        let audio = fixture(
+            tmp.path(),
+            "source.wav",
+            "sine=frequency=440:sample_rate=48000",
+            &["-t", "2"],
+        );
+        let video = fixture(
+            tmp.path(),
+            "source.mp4",
+            "testsrc2=size=160x120:rate=10",
+            &["-t", "2", "-c:v", "libx264"],
+        );
+        for (format, source, kind, codec) in [
+            ("mkv", &video, "video", "h264"),
+            ("mov", &video, "video", "h264"),
+            ("m4a", &audio, "audio", "aac"),
+            ("aac", &audio, "audio", "aac"),
+            ("ogg", &audio, "audio", "vorbis"),
+        ] {
+            let mut options = json!({"advanced_enabled":true,"rate_control":"bitrate","video_bitrate_kbps":200,"encoder":"software"});
+            options[format!("{kind}_format")] = json!(format);
+            let output = tmp.path().join(format!("output.{format}"));
+            compress(
+                source,
+                &output,
+                &options,
+                &AtomicBool::new(false),
+                |_, _| {},
+            )
+            .unwrap();
+            let info = probe(&output).unwrap();
+            assert_eq!(info["kind"], kind);
+            assert_eq!(
+                info[if kind == "video" {
+                    "codec"
+                } else {
+                    "audio_codec"
+                }],
+                codec
+            );
+            let sample = tmp.path().join(format!("preview.{format}"));
+            preview(
+                source,
+                &sample,
+                &options,
+                &AtomicBool::new(false),
+                |_, _| {},
+                0.5,
+                1.0,
+            )
+            .unwrap();
+            assert!(sample.metadata().unwrap().len() > 0);
+            options["rate_control"] = json!("target");
+            options["target_mb"] = json!(0.06);
+            let limited = tmp.path().join(format!("limited.{format}"));
+            compress(
+                source,
+                &limited,
+                &options,
+                &AtomicBool::new(false),
+                |_, _| {},
+            )
+            .unwrap();
+            assert!(limited.metadata().unwrap().len() <= 60000);
+        }
     }
     #[test]
     fn real_output_race_and_running_cancel() {
@@ -1891,22 +2069,25 @@ mod tests {
         let result = compress(
             &source,
             &tmp.path().join("fit.webp"),
-            &json!({"target_mb":0.006}),
+            &json!({"target_mb":0.006,"max_height":480}),
             &AtomicBool::new(false),
             |_, _| {},
         )
         .unwrap();
         assert!(n(&result["size"]) <= 6000.0);
         assert!(n(&result["width"]) < 400.0);
-        assert!(compress(
+        let fixed = compress(
             &source,
             &tmp.path().join("fixed.webp"),
             &json!({"advanced_enabled":true,"target_mb":0.0001,"output_width":200}),
             &AtomicBool::new(false),
-            |_, _| {}
+            |_, _| {},
         )
-        .unwrap_err()
-        .contains("size limit"));
+        .unwrap();
+        assert!(n(&fixed["size"]) > 100.0);
+        assert_eq!(n(&fixed["width"]), 200.0);
+        assert!(s(&fixed, "warning").contains("size limit"));
+        assert!(tmp.path().join("fixed.webp").is_file());
     }
     #[test]
     fn explicit_geometry_is_not_reduced() {

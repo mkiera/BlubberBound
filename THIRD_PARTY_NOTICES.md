@@ -1,6 +1,6 @@
 # Third-party notices
 
-SealSqueeze is licensed under GNU GPL version 3. See [LICENSE](LICENSE).
+BlubberBound is licensed under GNU GPL version 3. See [LICENSE](LICENSE).
 
 The application reuses code and assets from [FinFetcher](https://github.com/mkiera/FinFetcher) and follows encoding behavior from FlipperClipper. The Outfit font files come from FinFetcher.
 

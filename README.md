@@ -8,7 +8,7 @@ A video, audio, and image compressor built with Rust and Tauri.
 
 ## Features
 
-- 🎬 **Media Compression** - Squeeze videos, audio, and images to a chosen file size
+- 🎬 **Media Compression** - Compress videos, audio, and images to a chosen file size
 - 👀 **Quality Preview** - Compare a short compressed sample before exporting
 - ⚙️ **Advanced Controls** - Adjust scaling, bitrate, quality, frame rate, and audio settings
 - 📂 **Batch Processing** - Queue files and folders, with another-copy and replacement options

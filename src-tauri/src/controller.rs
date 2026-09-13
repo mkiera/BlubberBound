@@ -207,7 +207,10 @@ impl Controller {
                                         &json!({"status":"pending","stage":"Ready to retry after restart"}),
                                     );
                                 } else if job["status"] == "completed" {
-                                    merge(&mut job, &json!({"percent":100,"stage":"Completed"}));
+                                    merge(
+                                        &mut job,
+                                        &json!({"percent":100,"stage":item["warning"].as_str().unwrap_or("Completed"),"warning":item["warning"]}),
+                                    );
                                 }
                                 inner.jobs.push(job);
                             }
@@ -456,7 +459,7 @@ impl Controller {
             } else {
                 format!(" ({})", number + 1)
             };
-            let path = folder.join(format!("{stem}_squeezed{suffix}.{extension}"));
+            let path = folder.join(format!("{stem}_compressed{suffix}.{extension}"));
             if fs::symlink_metadata(&path).is_err() {
                 return Ok(path);
             }
@@ -515,7 +518,7 @@ impl Controller {
                 }
                 if let Some((target, expected)) = replacement.take() {
                     let temp = tempfile::Builder::new()
-                        .prefix(".squeeze-replace-")
+                        .prefix(".compress-replace-")
                         .tempdir_in(target.parent().ok_or("No output folder")?)
                         .map_err(|e| e.to_string())?;
                     let staged = temp
@@ -527,14 +530,14 @@ impl Controller {
                     if self.cancel.load(Ordering::SeqCst) {
                         return Err("Cancelled".into());
                     }
-                    if identity(&target).map_err(|e| format!("Checking previous squeeze: {e}"))?
+                    if identity(&target).map_err(|e| format!("Checking previous output: {e}"))?
                         != expected
                     {
-                        return Err("The previous squeeze changed after confirmation. It was kept. Try again.".into());
+                        return Err("The previous output changed after confirmation. It was kept. Try again.".into());
                     }
                     drop(expected);
                     replace_file(&staged, &target)
-                        .map_err(|e| format!("Replacing previous squeeze: {e}"))?;
+                        .map_err(|e| format!("Replacing previous output: {e}"))?;
                     result["path"] = json!(target.to_string_lossy());
                     Ok(result)
                 } else {
@@ -552,7 +555,7 @@ impl Controller {
                     for previous in &mut s.jobs {
                         if previous["output"] == result["path"] {
                             previous["output_size"] = result["size"].clone();
-                            previous["stage"] = json!("Replaced by a later squeeze");
+                            previous["stage"] = json!("Replaced by a later compression");
                         }
                     }
                 }
@@ -561,7 +564,7 @@ impl Controller {
                 match result {
                     Ok(result) => merge(
                         current,
-                        &json!({"status":"completed","stage":"Completed","percent":100,"output":result["path"],"output_size":result["size"]}),
+                        &json!({"status":"completed","stage":result["warning"].as_str().unwrap_or("Completed"),"warning":result["warning"],"percent":100,"output":result["path"],"output_size":result["size"]}),
                     ),
                     Err(error) => {
                         let cancelled = self.cancel.load(Ordering::SeqCst)
@@ -654,26 +657,26 @@ impl Controller {
             let mut s = self.inner.lock().unwrap();
             if s.closed || s.installing || s.running || s.preview["status"] == "running" {
                 return Err(
-                    "Finish the current operation before squeezing this file again.".into(),
+                    "Finish the current operation before compressing this file again.".into(),
                 );
             }
             if !matches!(action, "copy" | "replace") {
-                return Err("Choose another copy or replace the previous squeeze.".into());
+                return Err("Choose another copy or replace the previous output.".into());
             }
             let old = s
                 .jobs
                 .iter()
                 .find(|j| j["id"] == id && j["status"] == "completed")
                 .cloned()
-                .ok_or("Choose a completed file to squeeze again.")?;
+                .ok_or("Choose a completed file to compress again.")?;
             if s.jobs.len() >= 500 {
-                return Err("Clear finished items before adding another squeeze.".into());
+                return Err("Clear finished items before adding another compression.".into());
             }
             if s.jobs
                 .iter()
                 .any(|j| j["source"] == old["source"] && !terminal(j))
             {
-                return Err("This source already has a queued squeeze.".into());
+                return Err("This source already has a queued compression.".into());
             }
             let source = fs::canonicalize(text(&old, "source")).map_err(|e| e.to_string())?;
             let mut job = new_job(&source);
@@ -883,13 +886,13 @@ mod tests {
     fn destination_uses_numbered_copy() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("video.mp4");
-        fs::write(dir.path().join("video_squeezed.mp4"), b"old").unwrap();
+        fs::write(dir.path().join("video_compressed.mp4"), b"old").unwrap();
         assert_eq!(
             Controller::destination(&source, "video", &defaults())
                 .unwrap()
                 .file_name()
                 .unwrap(),
-            "video_squeezed (2).mp4"
+            "video_compressed (2).mp4"
         );
     }
     fn wait_for(owner: &Controller, predicate: impl Fn(&Value) -> bool) {
