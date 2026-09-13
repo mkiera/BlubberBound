@@ -61,7 +61,5 @@ jobs:
           body_path: release-notes.md
           draft: false
           prerelease: ${{ steps.identity.outputs.prerelease == 'true' }}
-          files: |
-            dist_installer/*.exe
-            dist_installer/*.zip
+          files: dist_installer/*.exe
           fail_on_unmatched_files: true
