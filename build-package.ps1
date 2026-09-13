@@ -26,7 +26,7 @@ $identity = Get-Content build_info.json -Raw | ConvertFrom-Json
 $profile = Get-Content app_profile.json -Raw | ConvertFrom-Json
 $numeric = & node --input-type=module -e "import {numericVersion} from './scripts/versioning.mjs'; import fs from 'node:fs'; console.log(numericVersion(JSON.parse(fs.readFileSync('build_info.json')).version));"
 if ($LASTEXITCODE -ne 0) { throw 'Numeric version generation failed.' }
-$executableInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $PSScriptRoot 'src-tauri\target\release\sealsqueeze.exe'))
+$executableInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $PSScriptRoot 'src-tauri\target\release\blubberbound.exe'))
 if ($executableInfo.ProductVersion.Trim() -ne $identity.version -or $executableInfo.FileVersion.Trim() -ne $identity.version) {
     throw 'The executable version does not match its build identity.'
 }
@@ -53,7 +53,3 @@ $installerInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $PSScr
 if ($installerInfo.ProductVersion.Trim() -ne $identity.version -or $installerInfo.FileVersion.Trim() -ne $numeric) {
     throw 'The installer version does not match its build identity.'
 }
-$portable = "dist_installer/$exeStem-Portable.zip"
-Compress-Archive -Path $payload -DestinationPath $portable -Force
-$hashes = Get-Item "dist_installer/$($profile.installer_asset)", $portable | Get-FileHash -Algorithm SHA256
-$hashes | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path $_.Path -Leaf)" } | Set-Content dist_installer/SHA256SUMS.txt -Encoding ASCII

@@ -46,9 +46,9 @@ jobs:
         run: ./build-package.ps1
       - uses: actions/upload-artifact@v4
         with:
-          name: SealSqueeze-Release
+          name: BlubberBound-Release
           path: |
-            dist_installer/*
+            dist_installer/${{ steps.identity.outputs.installer }}
             release-notes.md
             build_info.json
           if-no-files-found: error
@@ -61,5 +61,5 @@ jobs:
           body_path: release-notes.md
           draft: false
           prerelease: ${{ steps.identity.outputs.prerelease == 'true' }}
-          files: dist_installer/*.exe
+          files: dist_installer/${{ steps.identity.outputs.installer }}
           fail_on_unmatched_files: true

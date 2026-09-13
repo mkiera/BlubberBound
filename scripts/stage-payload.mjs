@@ -2,7 +2,6 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { normalizeZipTimes } from './package-files.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const destination = process.argv[2];
@@ -10,7 +9,7 @@ if (!destination) throw new Error('A payload directory is required.');
 const profile = JSON.parse(readFileSync(join(root, 'app_profile.json'), 'utf8'));
 const identity = JSON.parse(readFileSync(join(root, 'build_info.json'), 'utf8'));
 mkdirSync(destination, { recursive: true });
-cpSync(join(root, 'src-tauri/target/release/sealsqueeze.exe'), join(destination, profile.executable));
+cpSync(join(root, 'src-tauri/target/release/blubberbound.exe'), join(destination, profile.executable));
 for (const file of ['app_profile.json', 'build_info.json', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) cpSync(join(root, file), join(destination, file));
 writeFileSync(join(destination, 'version.txt'), identity.version + '\n');
 mkdirSync(join(destination, 'tools'), { recursive: true });
@@ -33,4 +32,3 @@ for (const dependency of metadata.packages.filter(value => value.source).sort((a
   }
 }
 writeFileSync(join(destination, 'THIRD_PARTY_LICENSES.txt'), notices.join('\n'));
-normalizeZipTimes(destination);

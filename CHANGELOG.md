@@ -4,6 +4,10 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+## 1.0.0-beta.2 - 2026-09-12
+
+- Use BlubberBound for the executable, installation and settings folders, shortcuts, and installer download.
+- Publish only the Windows installer, without portable archives or checksum files.
 - Skip app builds for documentation-only changes and avoid duplicate branch installers for release-tagged commits.
 
 ## 1.0.0-beta.1 - 2026-09-12

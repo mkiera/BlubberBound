@@ -242,7 +242,7 @@ fn hidden(command: &mut Command) {
     command.stdin(Stdio::null()).stderr(Stdio::null());
 }
 fn local_token() -> Option<String> {
-    let mut token = std::env::var("SEALSQUEEZE_GITHUB_TOKEN")
+    let mut token = std::env::var("BLUBBERBOUND_GITHUB_TOKEN")
         .unwrap_or_default()
         .trim()
         .to_owned();
@@ -341,7 +341,7 @@ impl Source {
             self.token = local_token();
         }
         if auth && self.token.is_none() {
-            return Err("This repository is private. Sign in with GitHub CLI or set SEALSQUEEZE_GITHUB_TOKEN to an account with repository access.".into());
+            return Err("This repository is private. Sign in with GitHub CLI or set BLUBBERBOUND_GITHUB_TOKEN to an account with repository access.".into());
         }
         for _ in 0..8 {
             let mut request = self

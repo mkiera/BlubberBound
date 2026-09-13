@@ -53,7 +53,7 @@ export function stampIdentity(args = {}, root = projectRoot, environment = proce
   writeFileSync(resolve(root, 'build_info.json'), JSON.stringify(identity, null, 2) + '\n');
   mkdirSync(resolve(root, 'src-tauri'), { recursive: true });
   writeFileSync(resolve(root, 'src-tauri/build-config.json'), JSON.stringify({ productName: profile.display_name, version: identity.version }, null, 2) + '\n');
-  if (environment.GITHUB_OUTPUT) appendFileSync(environment.GITHUB_OUTPUT, `version=${identity.version}\nprerelease=${semver.prerelease(identity.version) !== null}\n`);
+  if (environment.GITHUB_OUTPUT) appendFileSync(environment.GITHUB_OUTPUT, `version=${identity.version}\nprerelease=${semver.prerelease(identity.version) !== null}\ninstaller=${profile.installer_asset}\n`);
   return identity;
 }
 

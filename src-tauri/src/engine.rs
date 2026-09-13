@@ -47,7 +47,7 @@ fn command(tool: &Path) -> Command {
     cmd
 }
 fn tool(name: &str) -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os(format!("SEALSQUEEZE_{}", name.to_uppercase()))
+    if let Some(path) = std::env::var_os(format!("BLUBBERBOUND_{}", name.to_uppercase()))
         .map(PathBuf::from)
         .filter(|p| p.is_file())
     {
@@ -1298,7 +1298,7 @@ fn export(
         return Err("The destination extension does not match the selected format.".into());
     }
     let temp = tempfile::Builder::new()
-        .prefix(".sealsqueeze-")
+        .prefix(".blubberbound-")
         .tempdir_in(parent)
         .map_err(|e| e.to_string())?;
     let output = temp.path().join(format!("output.{extension}"));
@@ -1554,7 +1554,7 @@ mod tests {
             .unwrap()
             .file_name()
             .to_string_lossy()
-            .starts_with(".sealsqueeze-")));
+            .starts_with(".blubberbound-")));
     }
     #[test]
     fn image_metadata_roundtrip() {

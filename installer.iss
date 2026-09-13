@@ -5,31 +5,31 @@
   #define VersionNumeric AppVersion
 #endif
 #ifndef AppName
-  #define AppName "SealSqueeze"
+  #define AppName "BlubberBound"
 #endif
 #ifndef PackageId
   #define PackageId "{{596690BB-D4AC-4C45-A35A-5C39B158156C}"
 #endif
 #ifndef Executable
-  #define Executable "SealSqueeze.exe"
+  #define Executable "BlubberBound.exe"
 #endif
 #ifndef PayloadDirectory
-  #define PayloadDirectory "SealSqueeze"
+  #define PayloadDirectory "BlubberBound"
 #endif
 #ifndef PayloadRoot
   #define PayloadRoot "dist\" + PayloadDirectory
 #endif
 #ifndef InstallerName
-  #define InstallerName "SealSqueeze-Setup"
+  #define InstallerName "BlubberBound-Setup"
 #endif
 #ifndef StorageId
-  #define StorageId "SealSqueeze"
+  #define StorageId "BlubberBound"
 #endif
 #ifndef Publisher
   #define Publisher "mkiera"
 #endif
 #ifndef RepositoryUrl
-  #define RepositoryUrl "https://github.com/mkiera/SealSqueeze"
+  #define RepositoryUrl "https://github.com/mkiera/BlubberBound"
 #endif
 
 [Setup]
@@ -40,7 +40,7 @@ VersionInfoVersion={#VersionNumeric}
 AppPublisher={#Publisher}
 AppPublisherURL={#RepositoryUrl}
 DefaultDirName={localappdata}\Programs\{#StorageId}
-DefaultGroupName=SealSuite
+DefaultGroupName={#AppName}
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

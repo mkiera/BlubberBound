@@ -203,7 +203,7 @@ fn dispatch(app: &tauri::AppHandle, method: &str, args: Value) -> Result<Value, 
                     "Updates - {}",
                     state.profile["display_name"]
                         .as_str()
-                        .unwrap_or("SealSqueeze")
+                        .unwrap_or("BlubberBound")
                 ),
                 740.0,
                 700.0,
@@ -228,7 +228,7 @@ fn dispatch(app: &tauri::AppHandle, method: &str, args: Value) -> Result<Value, 
                     "What's new - {}",
                     state.profile["display_name"]
                         .as_str()
-                        .unwrap_or("SealSqueeze")
+                        .unwrap_or("BlubberBound")
                 ),
                 640.0,
                 560.0,
@@ -297,16 +297,16 @@ fn main() {
     tauri::Builder::default().plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![desktop_command])
         .setup(move|app|{
-            let directory=state_override.unwrap_or_else(||{
+            let directory=if let Some(directory)=state_override {directory} else {
                 let base=std::env::var_os("LOCALAPPDATA").map(PathBuf::from).or_else(||app.path().local_data_dir().ok()).unwrap_or_else(std::env::temp_dir);
-                base.join(profile["storage_id"].as_str().unwrap_or("SealSqueeze"))
-            });
+                base.join(profile["storage_id"].as_str().unwrap_or("BlubberBound"))
+            };
             std::fs::create_dir_all(&directory)?;
             let queue=Controller::new(directory.join("state.json"));if !files.is_empty(){queue.add_paths(files);}
             let updater=updates::Updater::new(profile.clone(),directory,version.clone());
             if let Some(identity)=option_env!("SQUEEZE_BUILD_IDENTITY_JSON").and_then(|value|serde_json::from_str(value).ok()){updater.set_identity(identity);}
             updater.start();
-            if let Some(window)=app.get_webview_window("main"){window.set_title(profile["display_name"].as_str().unwrap_or("SealSqueeze"))?;}
+            if let Some(window)=app.get_webview_window("main"){window.set_title(profile["display_name"].as_str().unwrap_or("BlubberBound"))?;}
             app.manage(Desktop{queue,updater,profile,version});
             let handle=app.handle().clone();std::thread::spawn(move||loop{
                 std::thread::sleep(Duration::from_millis(500));let state=handle.state::<Desktop>();
