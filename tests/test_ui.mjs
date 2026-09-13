@@ -15,6 +15,25 @@ test('formats sizes without misleading zero values', () => {
     assert.equal(formatBytes(12500000), '12.5 MB');
 });
 
+test('progress refreshes quickly during compression and slows when idle', async () => {
+    const source = fs.readFileSync(new URL('../script.js', import.meta.url), 'utf8');
+    const connect = source.slice(source.indexOf('    function connect()'), source.indexOf("    $('dismiss-notice')"));
+    const scheduled = [];
+    const state = {running: true, preview: {status: 'idle'}};
+    const sandbox = {ready: false, state, poll: async () => {}, window: {desktop: {api: {}}, setTimeout: (callback, delay) => scheduled.push({callback, delay})}};
+    vm.runInNewContext(`${connect}\nconnect();`, sandbox);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(scheduled[0].delay, 100);
+    state.running = false;
+    state.preview.status = 'running';
+    await scheduled.shift().callback();
+    assert.equal(scheduled[0].delay, 100);
+    state.preview.status = 'ready';
+    await scheduled.shift().callback();
+    assert.equal(scheduled[0].delay, 500);
+    assert.equal(scheduled.length, 1);
+});
+
 test('reports savings and larger output truthfully', () => {
     assert.equal(savingsLabel(1000, 750), '25% smaller');
     assert.equal(savingsLabel(1000, 1100), '10% larger');

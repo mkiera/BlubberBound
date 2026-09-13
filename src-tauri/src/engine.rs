@@ -290,23 +290,76 @@ fn probe_cancel(path: &Path, cancel: &AtomicBool) -> Result<Value, String> {
         info["width"] = json!(width);
         info["height"] = json!(height);
         info["fps"] = json!(ratio(&v["avg_frame_rate"], 30.0));
+        info["frame_count"] = json!(n(&v["nb_frames"]));
+        info["video_duration"] = json!(n(&v["duration"]));
         info["video_index"] = v["index"].clone();
         info["codec"] = v["codec_name"].clone();
         info["pixel_format"] = v["pix_fmt"].clone();
     }
     Ok(info)
 }
+#[derive(Clone, Copy)]
+enum ProgressTotal {
+    Seconds(f64),
+    Frames(f64),
+}
+impl ProgressTotal {
+    fn media(info: &Value, options: &Value, duration: f64, sample: bool) -> Self {
+        if s(info, "kind") != "video" {
+            return Self::Seconds(duration);
+        }
+        if !sample && n(&options["fps"]) == 0.0 && n(&info["frame_count"]) > 0.0 {
+            return Self::Frames(n(&info["frame_count"]));
+        }
+        let fps = if n(&options["fps"]) > 0.0 {
+            n(&options["fps"]).min(n(&info["fps"]))
+        } else {
+            n(&info["fps"])
+        };
+        let duration = if !sample && n(&info["video_duration"]) > 0.0 {
+            duration.min(n(&info["video_duration"]))
+        } else {
+            duration
+        };
+        if fps > 0.0 {
+            Self::Frames((fps * duration).ceil())
+        } else {
+            Self::Seconds(duration)
+        }
+    }
+    fn count(self, line: &str) -> Option<u64> {
+        line.strip_prefix(match self {
+            Self::Seconds(_) => "out_time_us=",
+            Self::Frames(_) => "frame=",
+        })?
+        .trim()
+        .parse()
+        .ok()
+    }
+    fn percent(self, count: u64) -> f64 {
+        let total = match self {
+            Self::Seconds(seconds) => seconds * 1_000_000.0,
+            Self::Frames(frames) => frames,
+        };
+        if total > 0.0 {
+            (count as f64 / total * 99.0).clamp(0.0, 99.0)
+        } else {
+            0.0
+        }
+    }
+}
 fn run(
     ffmpeg: &Path,
     args: &[String],
     cancel: &AtomicBool,
     progress: &impl Fn(f64, &str),
-    duration: f64,
+    total: ProgressTotal,
     stage: &str,
     timeout: Option<Duration>,
 ) -> Result<(), String> {
     check(cancel)?;
     let mut child = command(ffmpeg)
+        .args(["-stats_period", "0.1"])
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -314,12 +367,12 @@ fn run(
         .map_err(|e| e.to_string())?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    let elapsed = Arc::new(AtomicU64::new(0));
-    let read_elapsed = elapsed.clone();
+    let completed = Arc::new(AtomicU64::new(0));
+    let read_completed = completed.clone();
     let reader = thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if let Some(number) = line.strip_prefix("out_time_us=") {
-                read_elapsed.store(number.parse().unwrap_or(0), Ordering::Relaxed);
+            if let Some(count) = total.count(&line) {
+                read_completed.fetch_max(count, Ordering::Relaxed);
             }
         }
     });
@@ -352,12 +405,7 @@ fn run(
             let _ = child.kill();
             break child.wait().map_err(|e| e.to_string());
         }
-        let percent = if duration > 0.0 {
-            (elapsed.load(Ordering::Relaxed) as f64 / 1_000_000.0 / duration * 99.0)
-                .clamp(0.0, 99.0)
-        } else {
-            0.0
-        };
+        let percent = total.percent(completed.load(Ordering::Relaxed));
         if percent as i32 != last {
             progress(percent, stage);
             last = percent as i32;
@@ -383,6 +431,12 @@ fn run(
             "FFmpeg could not complete the export. {}",
             String::from_utf8_lossy(&errors[errors.len().saturating_sub(4000)..])
         ));
+    }
+    match total {
+        ProgressTotal::Seconds(value) | ProgressTotal::Frames(value) if value > 0.0 => {
+            progress(99.0, stage);
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -419,7 +473,7 @@ fn encoder(
             &args,
             cancel,
             progress,
-            0.0,
+            ProgressTotal::Seconds(0.0),
             "Checking hardware encoder",
             Some(Duration::from_secs(5)),
         )
@@ -872,7 +926,7 @@ fn encode_media(
             &args,
             cancel,
             progress,
-            duration,
+            ProgressTotal::media(info, &o, duration, sample.is_some()),
             if attempt == 0 {
                 "Compressing"
             } else {
@@ -1204,7 +1258,7 @@ fn encode_image(
             &args,
             cancel,
             progress,
-            0.0,
+            ProgressTotal::Seconds(0.0),
             "Compressing image",
             None,
         )?;
@@ -1340,6 +1394,7 @@ fn export(
     if size == 0 {
         return Err("The encoder produced an empty file.".into());
     }
+    progress(99.0, "Checking output");
     let output_info = probe_cancel(&output, cancel)?;
     progress(99.0, "Saving output");
     check(cancel)?;
@@ -1397,6 +1452,170 @@ fn export(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn video_progress_uses_frames_instead_of_buffered_timestamps() {
+        let total = ProgressTotal::Frames(4.0);
+        assert_eq!(total.count("out_time_us=500000"), None);
+        assert_eq!(total.percent(total.count("frame=4").unwrap()), 99.0);
+        assert_eq!(total.percent(total.count("frame=3").unwrap()), 74.25);
+        assert_eq!(total.count("frame=N/A"), None);
+        let audio = ProgressTotal::Seconds(4.0);
+        assert_eq!(
+            audio.percent(audio.count("out_time_us=2000000").unwrap()),
+            49.5
+        );
+        assert_eq!(audio.count("out_time_us=-100"), None);
+        assert_eq!(audio.count("out_time_us=N/A"), None);
+        assert_eq!(total.percent(10), 99.0);
+        assert_eq!(ProgressTotal::Seconds(0.0).percent(1), 0.0);
+    }
+    #[test]
+    fn progress_totals_follow_frame_count_frame_rate_and_preview_length() {
+        let info = json!({"kind":"video","fps":30,"frame_count":240,"video_duration":8});
+        let full = ProgressTotal::media(&info, &json!({}), 10.0, false);
+        assert_eq!(full.percent(120), 49.5);
+        let capped = ProgressTotal::media(&info, &json!({"fps":15}), 10.0, false);
+        assert_eq!(capped.percent(60), 49.5);
+        let sample = ProgressTotal::media(&info, &json!({"fps":15}), 2.0, true);
+        assert_eq!(sample.percent(15), 49.5);
+        let variable = json!({"kind":"video","fps":30,"frame_count":150});
+        assert_eq!(
+            ProgressTotal::media(&variable, &json!({}), 10.0, false).percent(75),
+            49.5
+        );
+        let missing_count = json!({"kind":"video","fps":30});
+        assert_eq!(
+            ProgressTotal::media(&missing_count, &json!({}), 10.0, false).percent(150),
+            49.5
+        );
+        let audio = json!({"kind":"audio"});
+        assert_eq!(
+            ProgressTotal::media(&audio, &json!({}), 10.0, false).percent(5_000_000),
+            49.5
+        );
+    }
+    #[test]
+    fn real_video_reports_intermediate_progress_and_reserves_completion() {
+        let ffmpeg = tool("ffmpeg").expect("FFmpeg is required for media tests");
+        let tmp = tempfile::tempdir().unwrap();
+        let output = tmp.path().join("progress.mp4");
+        let mut args = vec![];
+        add(
+            &mut args,
+            &[
+                "-v",
+                "error",
+                "-re",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=160x120:rate=30",
+                "-t",
+                "2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-progress",
+                "pipe:1",
+                &output.to_string_lossy(),
+            ],
+        );
+        let observed = Mutex::new(Vec::new());
+        run(
+            &ffmpeg,
+            &args,
+            &AtomicBool::new(false),
+            &|percent, _| observed.lock().unwrap().push(percent),
+            ProgressTotal::Frames(60.0),
+            "Compressing",
+            Some(Duration::from_secs(10)),
+        )
+        .unwrap();
+        let values = observed.lock().unwrap();
+        assert!(
+            values.iter().any(|p| *p > 50.0 && *p < 90.0),
+            "Missing intermediate progress: {values:?}"
+        );
+        assert!(values.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(values.iter().all(|p| *p < 100.0));
+        assert_eq!(values.last(), Some(&99.0));
+    }
+    #[test]
+    fn failed_encoder_does_not_report_completion() {
+        let ffmpeg = tool("ffmpeg").expect("FFmpeg is required for media tests");
+        let args = [
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=160x120:rate=4",
+            "-t",
+            "1",
+            "-c:v",
+            "missing_encoder",
+            "-progress",
+            "pipe:1",
+            "-f",
+            "null",
+            "-",
+        ]
+        .map(String::from);
+        let observed = Mutex::new(Vec::new());
+        assert!(run(
+            &ffmpeg,
+            &args,
+            &AtomicBool::new(false),
+            &|percent, _| observed.lock().unwrap().push(percent),
+            ProgressTotal::Frames(4.0),
+            "Compressing",
+            Some(Duration::from_secs(10))
+        )
+        .is_err());
+        assert!(observed.lock().unwrap().iter().all(|p| *p < 99.0));
+    }
+    #[test]
+    fn encoder_progress_reaches_completion_before_saving() {
+        let ffmpeg = tool("ffmpeg").expect("FFmpeg is required for media tests");
+        let tmp = tempfile::tempdir().unwrap();
+        let output = tmp.path().join("progress.mp4");
+        let mut args = vec![];
+        add(
+            &mut args,
+            &[
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=160x120:rate=4",
+                "-t",
+                "1",
+                "-c:v",
+                "libx264",
+                "-progress",
+                "pipe:1",
+                &output.to_string_lossy(),
+            ],
+        );
+        let observed = Mutex::new(Vec::new());
+        run(
+            &ffmpeg,
+            &args,
+            &AtomicBool::new(false),
+            &|percent, _| observed.lock().unwrap().push(percent),
+            ProgressTotal::Seconds(1.0),
+            "Compressing",
+            None,
+        )
+        .unwrap();
+        let values = observed.lock().unwrap();
+        assert!(
+            values.last().copied().unwrap_or(0.0) >= 99.0,
+            "Encoding finished with reported progress: {values:?}"
+        );
+    }
     fn fixture(root: &Path, name: &str, input: &str, extras: &[&str]) -> PathBuf {
         let ffmpeg = tool("ffmpeg").expect("FFmpeg is required for media tests");
         let path = root.join(name);
@@ -1409,7 +1628,7 @@ mod tests {
             &args,
             &AtomicBool::new(false),
             &|_, _| {},
-            0.0,
+            ProgressTotal::Seconds(0.0),
             "Test",
             Some(Duration::from_secs(30)),
         )
@@ -1937,7 +2156,7 @@ mod tests {
             &args,
             &AtomicBool::new(false),
             &|_, _| {},
-            0.0,
+            ProgressTotal::Seconds(0.0),
             "Test",
             None,
         )
@@ -2142,7 +2361,7 @@ mod tests {
             &args,
             &AtomicBool::new(false),
             &|_, _| {},
-            2.0,
+            ProgressTotal::Seconds(2.0),
             "Test",
             None,
         )

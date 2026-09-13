@@ -4,6 +4,7 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+- Track video compression progress by encoded frames and refresh progress more frequently, reserving completion for a checked and saved output.
 - Keep original resolution unless the user selects a resolution limit or manual scaling.
 - Save the smallest output produced when a size limit cannot be met, with a warning showing the actual size.
 - Use Compress throughout the interface and add a file-compressor description below the title.

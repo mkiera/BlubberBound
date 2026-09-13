@@ -521,8 +521,11 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
     function connect() {
         if (ready || !window.desktop?.api) return;
         ready = true;
-        poll();
-        window.setInterval(poll, 500);
+        async function refresh() {
+            await poll();
+            window.setTimeout(refresh, state?.running || state?.preview?.status === 'running' ? 100 : 500);
+        }
+        refresh();
     }
 
     $('dismiss-notice').addEventListener('click', () => message(''));
