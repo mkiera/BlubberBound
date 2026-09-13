@@ -4,6 +4,10 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+## 1.0.0-beta.3 - 2026-09-12
+
+- Keep the GPLv3 license without requiring acceptance during installation.
+
 ## 1.0.0-beta.2 - 2026-09-12
 
 - Use BlubberBound for the executable, installation and settings folders, shortcuts, and installer download.
