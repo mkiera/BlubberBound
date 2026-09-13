@@ -4,6 +4,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+- Skip app builds for documentation-only changes and avoid duplicate branch installers for release-tagged commits.
+
 ## 1.0.0-beta.1 - 2026-09-12
 
 - Rename the application to BlubberBound and use the new icon.
