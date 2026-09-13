@@ -15,6 +15,10 @@ test('installer uses the product name for its executable, folder and shortcuts',
   assert.match(installer, /596690BB-D4AC-4C45-A35A-5C39B158156C/);
 });
 
+test('installer does not require accepting a license', () => {
+  assert.doesNotMatch(installer, /^LicenseFile=/m);
+});
+
 test('installer retains payload rollback', () => {
   assert.match(installer, /RenameFile\(SavedPayload, LivePayload\)/);
 });
