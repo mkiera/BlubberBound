@@ -63,6 +63,9 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 [Files]
 Source: "{#PayloadRoot}\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[Dirs]
+Name: "{app}\app"; BeforeInstall: BackupPayload
+
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\app\{#Executable}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\app\{#Executable}"; Tasks: desktopicon
@@ -94,16 +97,38 @@ begin
   end;
 end;
 
+function TryBackupPayload(): Boolean;
+begin
+  Result := (SavedPayload <> '') or not DirExists(LivePayload);
+  if not Result then begin
+    Result := RenameFile(LivePayload, ExpandConstant('{app}\app.old'));
+    if Result then
+      SavedPayload := ExpandConstant('{app}\app.old');
+  end;
+end;
+
+procedure BackupPayload();
+var
+  Attempt: Integer;
+begin
+  for Attempt := 1 to 100 do begin
+    if TryBackupPayload() then
+      Exit;
+    Sleep(100);
+  end;
+  RaiseException('The application files are still in use. Close the application and try again.');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  Backup: String;
+  Attempt: Integer;
 begin
   if CurStep = ssInstall then begin
-    Backup := ExpandConstant('{app}\app.old');
-    if DirExists(LivePayload) then begin
-      if not RenameFile(LivePayload, Backup) then
-        RaiseException('Could not move the current application. Close the application and try again.');
-      SavedPayload := Backup;
+    // Older updaters wait for the installer log before exiting.
+    for Attempt := 1 to 30 do begin
+      if TryBackupPayload() then
+        Break;
+      Sleep(100);
     end;
   end else if CurStep = ssPostInstall then begin
     if SavedPayload <> '' then begin

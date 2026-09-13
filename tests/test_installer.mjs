@@ -21,6 +21,8 @@ test('installer does not require accepting a license', () => {
 
 test('installer retains payload rollback', () => {
   assert.match(installer, /RenameFile\(SavedPayload, LivePayload\)/);
+  assert.match(installer, /Name: "\{app\}\\app"; BeforeInstall: BackupPayload/);
+  assert.match(packaging, /test-installer\.ps1/);
 });
 
 test('packaging stages the renamed executable and emits no portable or checksum file', () => {

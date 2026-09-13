@@ -724,23 +724,6 @@ fn validate_binary(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-fn pending_prompt(text: &str) -> bool {
-    let mut pending = false;
-    for line in text.lines().map(str::to_lowercase) {
-        if line.contains("user chose")
-            || line.contains("user selected")
-            || line.contains("message box returned")
-        {
-            pending = false;
-        } else if line.contains("message box")
-            || line.contains("messagebox")
-            || line.contains("waiting for user")
-        {
-            pending = true;
-        }
-    }
-    pending
-}
 fn installer_path(path: &Path, folder: &Path) -> Result<(PathBuf, PathBuf), String> {
     validate_binary(path)?;
     let folder = folder.canonicalize().map_err(|e| e.to_string())?;
@@ -759,85 +742,20 @@ fn launch_installer(path: &Path, folder: &Path) -> Result<bool, String> {
     let (path, folder) = installer_path(path, folder)?;
     let log = folder.join(format!("update-{}.log", Uuid::new_v4().simple()));
     let mut command = Command::new(&path);
-    hidden(&mut command);
-    let mut child = command
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0000_0008 | 0x0000_0200 | 0x0800_0000);
+    }
+    command
         .args(["/SILENT", "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS"])
         .arg(format!("/LOG={}", log.display()))
         .current_dir(&folder)
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .map_err(|_| "The installer could not start. The current app will stay open.".to_owned())?;
-    wait_for_installer(
-        || {
-            child
-                .try_wait()
-                .map(|status| {
-                    status.map(|status| {
-                        if status.success() {
-                            0
-                        } else {
-                            status.code().unwrap_or(-1)
-                        }
-                    })
-                })
-                .map_err(|e| e.to_string())
-        },
-        &log,
-        Duration::from_millis(1500),
-    )
-}
-fn wait_for_installer(
-    mut poll: impl FnMut() -> Result<Option<i32>, String>,
-    log: &Path,
-    timeout: Duration,
-) -> Result<bool, String> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(code) = poll()? {
-            return if code == 0 {
-                Ok(true)
-            } else {
-                Err(format!(
-                    "The installer stopped with code {}. The current app will stay open.",
-                    code
-                ))
-            };
-        }
-        if Instant::now() >= deadline {
-            break;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    startup_log(&log)
-}
-fn startup_log(log: &Path) -> Result<bool, String> {
-    let mut raw = Vec::new();
-    File::open(log).and_then(|file|file.take(4 * 1024 * 1024 + 1).read_to_end(&mut raw)).map_err(|_|"The installer has not confirmed startup. Complete any installer prompt before closing the app.".to_owned())?;
-    if raw.len() > 4 * 1024 * 1024 {
-        return Err(
-            "The installer status is unexpectedly large. The current app will stay open.".into(),
-        );
-    }
-    let decoded = if raw.starts_with(&[255, 254]) {
-        String::from_utf16_lossy(
-            &raw[2..]
-                .chunks_exact(2)
-                .map(|v| u16::from_le_bytes([v[0], v[1]]))
-                .collect::<Vec<_>>(),
-        )
-    } else if raw.starts_with(&[254, 255]) {
-        String::from_utf16_lossy(
-            &raw[2..]
-                .chunks_exact(2)
-                .map(|v| u16::from_be_bytes([v[0], v[1]]))
-                .collect::<Vec<_>>(),
-        )
-    } else {
-        String::from_utf8_lossy(&raw).into_owned()
-    };
-    if decoded.trim().is_empty() || pending_prompt(&decoded) {
-        return Err("The installer is waiting for a response. Complete its prompt while the current app stays open.".into());
-    }
     Ok(true)
 }
 
@@ -1660,55 +1578,6 @@ mod tests {
         assert!(path.is_file());
     }
     #[test]
-    fn installer_startup_requires_success_or_viable_log() {
-        let folder = tempfile::tempdir().unwrap();
-        let log = folder.path().join("installer.log");
-        assert_eq!(
-            wait_for_installer(|| Ok(Some(0)), &log, Duration::ZERO).unwrap(),
-            true
-        );
-        assert!(wait_for_installer(|| Ok(Some(2)), &log, Duration::ZERO)
-            .unwrap_err()
-            .contains("code 2"));
-        assert!(wait_for_installer(|| Ok(None), &log, Duration::ZERO)
-            .unwrap_err()
-            .contains("confirmed startup"));
-        fs::write(&log, b"Starting installation").unwrap();
-        assert!(wait_for_installer(|| Ok(None), &log, Duration::ZERO).unwrap());
-        fs::write(&log, b"Message box: Close the application").unwrap();
-        assert!(wait_for_installer(|| Ok(None), &log, Duration::ZERO)
-            .unwrap_err()
-            .contains("waiting"));
-        fs::write(&log, b"").unwrap();
-        assert!(startup_log(&log).is_err());
-    }
-    #[test]
-    fn installer_logs_support_both_utf16_byte_orders_and_bound_size() {
-        let folder = tempfile::tempdir().unwrap();
-        let log = folder.path().join("installer.log");
-        let content = "Message box: Continue?\nUser chose Yes\nInstalling";
-        for little in [true, false] {
-            let mut bytes = if little {
-                vec![255, 254]
-            } else {
-                vec![254, 255]
-            };
-            for unit in content.encode_utf16() {
-                bytes.extend(if little {
-                    unit.to_le_bytes()
-                } else {
-                    unit.to_be_bytes()
-                });
-            }
-            fs::write(&log, bytes).unwrap();
-            assert!(startup_log(&log).unwrap());
-        }
-        fs::write(&log, vec![b'x'; 4 * 1024 * 1024 + 1]).unwrap();
-        assert!(startup_log(&log)
-            .unwrap_err()
-            .contains("unexpectedly large"));
-    }
-    #[test]
     fn installer_path_requires_validated_file_in_updates_folder() {
         let folder = tempfile::tempdir().unwrap();
         let updates = folder.path().join("updates");
@@ -1722,6 +1591,31 @@ mod tests {
         let wrong = updates.join("test.exe");
         fs::write(&wrong, b"MZtest").unwrap();
         assert!(installer_path(&wrong, &updates).is_err());
+    }
+    #[test]
+    #[cfg(windows)]
+    fn installer_handoff_returns_while_the_installer_waits_for_app_exit() {
+        let folder = tempfile::tempdir().unwrap();
+        let installer = folder.path().join("fixture-Setup.exe");
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/update_app.rs");
+        let mut compiler = Command::new("rustc");
+        hidden(&mut compiler);
+        assert!(compiler
+            .args(["--edition", "2021"])
+            .arg(source)
+            .arg("-o")
+            .arg(&installer)
+            .status()
+            .unwrap()
+            .success());
+        let result = launch_installer(&installer, folder.path());
+        fs::write(folder.path().join("release-installer.txt"), "exit").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !folder.path().join("installer-exited.txt").exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(result.unwrap(), true);
+        assert!(folder.path().join("installer-exited.txt").is_file());
     }
     #[test]
     fn invalid_installer_launch_clears_active_state_and_keeps_app_open() {
@@ -1793,16 +1687,6 @@ mod tests {
             .unwrap();
         assert!(updater.snapshot()["armed_id"].is_null());
         assert_eq!(updater.snapshot()["automatic"], false);
-    }
-    #[test]
-    fn prompt_detection_tracks_answers() {
-        assert!(pending_prompt("Message box: Close the app"));
-        assert!(!pending_prompt(
-            "Message box: Close the app\nUser chose Yes\nInstalling"
-        ));
-        assert!(!pending_prompt(
-            "Message box: Question\nMessage box returned 1"
-        ));
     }
     #[test]
     fn archive_only_extracts_fixed_root_name() {

@@ -4,6 +4,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+- Fix in-app updates by exiting promptly after starting the installer and allowing older versions to close before replacing application files.
+- Test running-application upgrades and relaunch during Windows packaging.
 ## 1.0.0-beta.4 - 2026-09-12
 
 - Track video compression progress by encoded frames and refresh progress more frequently, reserving completion for a checked and saved output.

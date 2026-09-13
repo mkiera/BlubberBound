@@ -44,6 +44,8 @@ if (-not $iscc -and $env:GITHUB_ACTIONS -eq 'true') {
     $iscc = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup *\ISCC.exe" | Select-Object -First 1 -ExpandProperty FullName
 }
 if (-not $iscc) { throw 'Install Inno Setup 6 before packaging.' }
+& "$PSScriptRoot\scripts\test-installer.ps1" -Compiler $iscc
+& "$PSScriptRoot\scripts\test-installer.ps1" -Compiler $iscc -HoldOpen
 $installerStem = [IO.Path]::GetFileNameWithoutExtension($profile.installer_asset)
 $repoUrl = "https://github.com/$($profile.owner)/$($profile.repository)"
 Write-Host 'Building the Windows installer...'
