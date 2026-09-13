@@ -5,7 +5,7 @@ on:
   push:
     branches: ['**']
     paths-ignore:
-      - '**/*.md'
+      - '**.md'
       - 'docs/**'
       - 'screenshots/**'
 
@@ -17,23 +17,7 @@ permissions:
   contents: read
 
 jobs:
-  select-build:
-    runs-on: ubuntu-latest
-    outputs:
-      build: ${{ steps.policy.outputs.build }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Test build selection
-        run: node --test tests/test_build_policy.mjs
-      - name: Check application changes and release tags
-        id: policy
-        run: node scripts/build-policy.mjs
-
   windows:
-    needs: select-build
-    if: needs.select-build.outputs.build == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
