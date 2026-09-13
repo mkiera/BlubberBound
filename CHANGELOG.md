@@ -4,6 +4,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+## 1.0.0-beta.1 - 2026-09-12
+
 - Rename the application to BlubberBound and use the new icon.
 - Run the desktop application with a Rust backend while retaining saved settings, queue entries, and the Windows testing launcher.
 - Preview short video and audio samples or compressed images before exporting, with original and output comparison.
