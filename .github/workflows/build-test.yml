@@ -3,7 +3,7 @@ name: Build Test
 on:
   workflow_dispatch:
   push:
-    branches: ['**']
+    branches: ['**', '!main']
     paths-ignore:
       - '**.md'
       - 'docs/**'

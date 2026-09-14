@@ -17,10 +17,8 @@ A video, audio, and image compressor built with Rust and Tauri.
 ## Download
 
 Get test builds from [Build Test](https://github.com/mkiera/BlubberBound/actions/workflows/build-test.yml?query=branch%3Abeta).
-Open a successful run and download the `BlubberBound-Setup` artifact.
-Repository access is required while development is private.
 
-Stable builds will appear on the [Releases](https://github.com/mkiera/BlubberBound/releases) page.
+Stable builds are available on the [Releases](https://github.com/mkiera/BlubberBound/releases) page.
 
 ## License
 
