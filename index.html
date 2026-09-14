@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>File compressor</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="desktop.js" defer></script><script src="script.js" defer></script>
+</head>
+<body>
+    <a class="skip-link" href="#queue-title">Skip to queue</a>
+    <div class="app">
+        <header class="app-header">
+            <div class="brand"><span class="seal" aria-hidden="true"><img src="icon.png" alt=""></span><div><h1 id="product-name">BlubberBound</h1><p>File compressor for video, audio, and images</p></div></div>
+            <div class="header-tools"><span id="version" class="app-version"></span><div class="app-controls"><button id="open-updates" class="button secondary" disabled>Updates</button><button id="open-settings" class="button secondary gear-button" title="Settings" aria-label="Settings">⚙</button></div></div>
+        </header>
+
+        <section id="update-banner" class="update-banner" aria-label="Available update" hidden><div class="banner-copy"><strong id="update-title"></strong><p id="update-status" role="status"></p><progress id="update-progress" max="100" aria-label="Update download progress" hidden></progress></div><div class="banner-actions"><button id="install-offer" class="button primary">Update</button><button id="update-details" class="text-button">Details</button><button id="dismiss-offer" class="text-button">Not now</button></div></section>
+        <section id="notes-banner" class="update-banner" aria-label="What's new" hidden><div class="banner-copy"><strong id="notes-title"></strong><p id="notes-count"></p></div><div class="banner-actions"><button id="read-notes" class="button secondary">Read it</button><button id="dismiss-notes" class="text-button">Got it</button></div></section>
+
+        <div id="notice" class="notice" role="alert" hidden><span id="notice-text"></span><button id="dismiss-notice" aria-label="Dismiss message">×</button></div>
+        <div id="connection" class="connection" role="status">Connecting to the desktop app…</div>
+
+        <main class="workspace">
+            <section class="queue-panel panel" aria-labelledby="queue-title">
+                <div class="panel-heading"><div><h2 id="queue-title" tabindex="-1">Files</h2></div><span id="queue-count" class="count">0 files</span></div>
+                <div id="drop-zone" class="drop-zone">
+                    <div class="drop-symbol" aria-hidden="true">↓</div>
+                    <p>Drag videos, audio, or images here.</p>
+                    <div class="add-actions"><button id="add-files" class="button primary" disabled><span aria-hidden="true">+</span> Add files</button><button id="add-folder" class="button secondary" disabled>Add folder</button></div>
+                </div>
+                <div class="queue-toolbar"><span id="queue-status" role="status">Your queue is ready for files.</span><button id="clear-finished" class="text-button" disabled>Clear finished</button></div>
+                <div id="empty-queue" class="empty-queue"><span aria-hidden="true">☷</span><p>A smaller copy for every file.</p><small>Add files above, choose a size limit, and start compressing.</small></div>
+                <ol id="jobs" class="jobs" aria-label="Compression queue"></ol>
+            </section>
+
+            <aside class="settings-panel panel" aria-labelledby="settings-title">
+                <div class="panel-heading"><div><h2 id="settings-title" tabindex="-1">Compression settings</h2></div><button id="open-advanced" class="button secondary" aria-haspopup="dialog" disabled>Advanced…</button></div>
+                <form id="settings-form">
+                    <fieldset id="settings-fields" disabled>
+                        <label class="field-label" for="target-mb">Size limit <span>per file</span></label>
+                        <div class="target-input"><input id="target-mb" name="target_mb" type="number" min="0.1" max="100000" step="any" value="25" required inputmode="decimal" aria-describedby="target-help"><span>MB</span></div>
+                        <div class="presets" aria-label="Size presets"><button type="button" data-target="5">5 MB</button><button type="button" data-target="10">10 MB</button><button type="button" data-target="25" aria-pressed="true">25 MB</button><button type="button" data-target="50">50 MB</button><button type="button" data-target="100">100 MB</button></div>
+                        <p class="help" id="target-help">Smaller limits trade detail for size. If the limit cannot be met, the smallest output produced is saved with a warning.</p>
+                        <div class="settings-options"><div class="field-section"><span class="field-label">Output formats</span><div class="format-grid">
+                            <label for="video-format">Video<select id="video-format" name="video_format"><option value="mp4">MP4</option><option value="webm">WebM</option><option value="mkv">MKV</option><option value="mov">MOV</option></select></label>
+                            <label for="audio-format">Audio<select id="audio-format" name="audio_format"><option value="mp3">MP3</option><option value="opus">Opus</option><option value="m4a">M4A (AAC)</option><option value="aac">AAC</option><option value="ogg">Ogg (Vorbis)</option></select></label>
+                            <label for="image-format">Images<select id="image-format" name="image_format"><option value="webp">WebP</option><option value="jpeg">JPEG</option></select></label>
+                        </div></div>
+                        <div class="field-section"><label for="max-height" class="field-label">Maximum video height</label><select id="max-height" name="max_height"><option value="0">Keep original resolution</option><option value="custom" id="custom-resolution" disabled hidden>Advanced scaling</option><option value="2160">2160p / 4K</option><option value="1440">1440p</option><option value="1080">1080p / Full HD</option><option value="720">720p / HD</option><option value="480">480p</option></select></div>
+                        <div class="field-section"><label for="encoder" class="field-label">Video encoding</label><select id="encoder" name="encoder"><option value="auto">Auto / use hardware when available</option><option value="software">Software / CPU</option></select></div></div>
+                    </fieldset>
+                </form>
+                <div class="destination"><span class="field-label">Save copies to</span><p id="output-dir" title="Each file's original folder">Each file’s original folder</p><div class="destination-actions"><button id="choose-output" class="text-button" disabled>Choose folder…</button><button id="use-source" class="text-button" disabled hidden>Use source folders</button></div></div>
+                <div class="start-actions"><button id="start-queue" class="button start-button" disabled>Start compressing <span aria-hidden="true">→</span></button><div id="running-actions" hidden><button id="cancel-current" class="button secondary" disabled>Skip current</button><button id="stop-queue" class="button danger" disabled>Stop queue</button></div><p id="start-hint" class="help">Add a file to get started.</p></div>
+            </aside>
+        </main>
+        <footer id="tools-status" class="app-footer" role="status" hidden></footer>
+    </div>
+    <dialog id="app-settings-dialog" class="settings-dialog" aria-labelledby="app-settings-title">
+        <div class="dialog-heading"><h2 id="app-settings-title">Settings</h2><button id="close-settings" class="button secondary">Close</button></div>
+        <section class="advanced-section"><h3>Updates</h3>
+            <label for="settings-channel">Update channel<select id="settings-channel"><option value="stable">Stable</option><option value="prerelease">Beta</option><option value="alpha">Alpha</option></select></label>
+            <label class="check-field"><input id="settings-automatic" type="checkbox">Check for updates automatically</label>
+            <p class="help">Stable and Beta can offer updates automatically. Alpha builds are installed manually.</p>
+        </section>
+        <section class="advanced-section"><h3>Compression</h3><p class="help">Basic compression controls are on the main window. Advanced settings include quality, bitrate, dimensions, and metadata.</p><button id="settings-advanced" class="button secondary">Advanced compression…</button></section>
+        <p id="settings-error" class="dialog-error" role="alert" hidden></p>
+    </dialog>
+    <dialog id="rerun-dialog" class="rerun-dialog" aria-labelledby="rerun-title">
+        <h2 id="rerun-title">Compress again</h2>
+        <label for="rerun-file">File<select id="rerun-file"></select></label>
+        <p class="help">Another copy uses your current output folder. Replace previous output writes to this path after compression succeeds:</p>
+        <p id="rerun-path" class="preview-name"></p>
+        <p id="rerun-format-help" class="help" hidden>The output format changed. Choose Another copy to use the new format.</p>
+        <p id="rerun-error" class="dialog-error" role="alert" hidden></p>
+        <div class="dialog-actions"><button id="rerun-copy" class="button primary">Another copy</button><button id="rerun-replace" class="button secondary">Replace previous output</button><button id="cancel-rerun" class="button secondary">Cancel</button></div>
+    </dialog>
+    <dialog id="advanced-dialog" class="settings-dialog" aria-labelledby="advanced-title">
+        <div class="dialog-heading"><h2 id="advanced-title">Advanced compression</h2><button id="close-advanced" class="button secondary" aria-label="Close advanced settings">Close</button></div>
+        <form id="advanced-form">
+            <fieldset id="advanced-fields" disabled>
+                <label class="check-field"><input id="advanced-enabled" name="advanced_enabled" type="checkbox">Use advanced settings</label>
+                <p class="help">Settings apply to every queued file of the matching type. Turn this off to use basic compression.</p>
+                <div id="advanced-controls">
+                    <section class="advanced-section"><h3>Compression mode</h3>
+                        <label for="rate-control">Mode<select id="rate-control" name="rate_control"><option value="target">Fit size limit</option><option value="bitrate">Manual bitrate</option><option value="quality">Constant quality</option></select></label>
+                        <p id="rate-help" class="help">Fit size limit adjusts quality to meet the size limit.</p>
+                        <div class="advanced-grid">
+                            <label for="video-bitrate">Video bitrate (kbps)<input id="video-bitrate" name="video_bitrate_kbps" type="number" min="12" max="100000" step="1" value="2500"></label>
+                            <label for="audio-bitrate">Audio bitrate (kbps)<input id="audio-bitrate" name="audio_bitrate_kbps" type="number" min="8" max="320" step="1" value="128"></label>
+                            <label for="crf">Video quality (CRF)<input id="crf" name="crf" type="number" min="0" max="51" step="1" value="23"><span class="help">Lower values retain more detail. Uses software encoding.</span></label>
+                            <label for="preset">Encoding speed<select id="preset" name="preset"><option>ultrafast</option><option>superfast</option><option selected>veryfast</option><option>faster</option><option>fast</option><option>medium</option><option>slow</option><option>slower</option><option>veryslow</option></select><span class="help">Slower settings can improve compression. Speed mappings vary by encoder.</span></label>
+                        </div>
+                    </section>
+                    <section class="advanced-section"><h3>Video and image dimensions</h3>
+                        <label for="scale-percent">Scale (%)</label><div class="range-field"><input id="scale-slider" type="range" min="10" max="200" step="1" value="100" aria-label="Scale percent"><input id="scale-percent" name="scale_percent" type="number" min="10" max="200" step="1" value="100"></div>
+                        <div class="advanced-grid">
+                            <label for="output-width">Maximum width (px)<input id="output-width" name="output_width" type="number" min="0" max="7680" step="1" value="0"></label>
+                            <label for="output-height">Maximum height (px)<input id="output-height" name="output_height" type="number" min="0" max="7680" step="1" value="0"></label>
+                            <label for="fps">Maximum video frame rate (fps)<input id="fps" name="fps" type="number" min="0" max="120" step="any" value="0"></label>
+                        </div>
+                        <p class="help">Zero leaves that dimension or frame rate uncapped. Keep original resolution preserves the source dimensions. Explicit scaling or dimension limits override it and preserve aspect ratio. A selected basic height limit still applies.</p>
+                    </section>
+                    <section class="advanced-section"><h3>Audio</h3><label class="check-field"><input id="mute-audio" name="mute_audio" type="checkbox">Remove audio from video</label>
+                        <div class="advanced-grid"><label for="audio-channels">Channels<select id="audio-channels" name="audio_channels"><option value="0">Automatic (up to stereo)</option><option value="1">Mono</option><option value="2">Stereo</option></select></label>
+                        <label for="audio-sample-rate">Sample rate<select id="audio-sample-rate" name="audio_sample_rate"><option value="0">Automatic</option><option value="22050">22,050 Hz</option><option value="32000">32,000 Hz</option><option value="44100">44,100 Hz</option><option value="48000">48,000 Hz</option></select></label></div>
+                    </section>
+                    <section class="advanced-section"><h3>Images and metadata</h3><div class="advanced-grid"><label for="image-quality">Image quality<input id="image-quality" name="image_quality" type="number" min="1" max="100" step="1" value="90"><span class="help">Higher values retain more detail. Size-limit mode may reduce this.</span></label><div><label class="check-field"><input id="image-lossless" name="image_lossless" type="checkbox">Lossless WebP</label><label class="check-field"><input id="strip-metadata" name="strip_metadata" type="checkbox" checked>Remove metadata</label></div></div><p class="help">Lossless applies only to WebP images. Some metadata cannot be retained across formats.</p></section>
+                </div>
+            </fieldset>
+            <p id="advanced-error" class="dialog-error" role="alert" hidden></p>
+            <div class="dialog-actions"><button id="save-advanced" type="submit" class="button primary">Apply settings</button></div>
+        </form>
+    </dialog>
+    <dialog id="preview-dialog" class="preview-dialog" aria-labelledby="preview-title">
+        <div class="dialog-heading"><h2 id="preview-title">Quality preview</h2><button id="close-preview" class="button secondary" aria-label="Close quality preview">Close</button></div>
+        <p id="preview-name" class="preview-name"></p>
+        <p class="help">Uses current compression settings. A short sample shows local detail. Final size-limit adjustments can change quality elsewhere in the file.</p>
+        <form id="preview-form"><fieldset id="preview-fields">
+            <div id="preview-time-fields" class="advanced-grid"><div><label for="preview-start">Start (seconds)</label><div class="range-field"><input id="preview-start-slider" type="range" min="0" max="0" step="0.1" value="0" aria-label="Preview start seconds"><input id="preview-start" type="number" min="0" max="0" step="0.1" value="0"></div></div><label for="preview-duration">Sample length (seconds)<input id="preview-duration" type="number" min="1" max="15" step="1" value="5"></label></div>
+            <div class="dialog-actions"><button id="generate-preview" type="submit" class="button primary">Generate preview</button><button id="preview-original" type="button" class="button secondary">Open original</button></div>
+        </fieldset></form>
+        <div id="preview-feedback" role="status"><p id="preview-status"></p><progress id="preview-progress" max="100" aria-label="Preview progress" hidden></progress></div>
+        <p id="preview-error" class="dialog-error" role="alert" hidden></p>
+        <div id="preview-comparison" class="preview-comparison" hidden><section><h3>Original</h3><div id="original-media" class="media-frame"></div></section><section><h3>Compressed sample</h3><div id="preview-media" class="media-frame"></div></section></div>
+        <p id="preview-result" class="help"></p>
+        <p id="preview-stale" class="dialog-error" hidden>Settings or sample range changed. Generate another preview to see the current result.</p>
+        <div class="dialog-actions"><button id="cancel-preview" class="button danger" hidden>Cancel preview</button><button id="open-preview" class="button secondary" hidden>Open preview in player</button></div>
+    </dialog>
+</body>
+</html>

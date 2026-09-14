@@ -8,7 +8,7 @@ A video, audio, and image compressor built with Rust and Tauri.
 
 ## Features
 
-- 🎬 **Media Compression** - Squeeze videos, audio, and images to a chosen file size
+- 🎬 **Media Compression** - Compress videos, audio, and images to a chosen file size
 - 👀 **Quality Preview** - Compare a short compressed sample before exporting
 - ⚙️ **Advanced Controls** - Adjust scaling, bitrate, quality, frame rate, and audio settings
 - 📂 **Batch Processing** - Queue files and folders, with another-copy and replacement options
@@ -16,11 +16,8 @@ A video, audio, and image compressor built with Rust and Tauri.
 
 ## Download
 
-Get test builds from [Build Test](https://github.com/mkiera/BlubberBound/actions/workflows/build-test.yml?query=branch%3Abeta).
-Open a successful run and download the `BlubberBound-Setup` artifact.
-Repository access is required while development is private.
-
-Stable builds will appear on the [Releases](https://github.com/mkiera/BlubberBound/releases) page.
+Get stable and prerelease installers from the [Releases](https://github.com/mkiera/BlubberBound/releases) page.
+Development builds are available from [Build Test](https://github.com/mkiera/BlubberBound/actions/workflows/build-test.yml?query=branch%3Abeta).
 
 ## License
 
