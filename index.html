@@ -40,8 +40,7 @@
                 <form id="settings-form">
                     <fieldset id="settings-fields" disabled>
                         <label class="field-label" for="compression-mode">Compression mode</label>
-                        <select id="compression-mode" name="compression_mode" aria-describedby="compression-mode-help"><option value="limit">Fit a size limit</option><option value="auto">Auto quality</option></select>
-                        <p class="help" id="compression-mode-help">Auto compares video frames and checks image pixels and audio samples exactly. It uses MKV, FLAC, or lossless WebP, and keeps the original if no smaller file passes.</p>
+                        <select id="compression-mode" name="compression_mode"><option value="limit">Fit a size limit</option><option value="auto">Auto quality</option></select>
                         <label class="field-label" for="target-mb">Size limit <span>per file</span></label>
                         <div class="target-input"><input id="target-mb" name="target_mb" type="number" min="0.1" max="100000" step="any" value="25" required inputmode="decimal" aria-describedby="target-help"><span>MB</span></div>
                         <div class="presets" aria-label="Size presets"><button type="button" data-target="5">5 MB</button><button type="button" data-target="10">10 MB</button><button type="button" data-target="25" aria-pressed="true">25 MB</button><button type="button" data-target="50">50 MB</button><button type="button" data-target="100">100 MB</button></div>

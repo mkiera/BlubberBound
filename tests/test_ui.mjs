@@ -60,6 +60,17 @@ test('auto quality mode is distinct from a size limit and invalid modes are reje
     assert.match(html, /id="auto-formats-info"[^>]*>Auto uses MKV video, FLAC audio, and lossless WebP images/);
 });
 
+test('compression mode keeps the Advanced label fixed and has no mode description', () => {
+    const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const source = fs.readFileSync(new URL('../script.js', import.meta.url), 'utf8');
+    const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    assert.doesNotMatch(html, /compression-mode-help/);
+    assert.match(html, /id="open-advanced"[^>]*>Advanced…<\/button>/);
+    assert.doesNotMatch(source, /\$\('open-advanced'\)\.textContent\s*=/);
+    assert.match(source, /'open-advanced'\]\) \$\(id\)\.disabled = auto/);
+    assert.match(css, /#compression-mode \+ label\[for="target-mb"\]\{margin-top:18px\}/);
+});
+
 test('every static DOM lookup resolves in its window', () => {
     for (const [htmlFile, scriptFile, pattern] of [
         ['index.html', 'script.js', /\$\('([^']+)'\)/g],

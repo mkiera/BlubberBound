@@ -219,7 +219,6 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         if (customScale && $('max-height').value === '0') $('max-height').value = 'custom';
         if (!customScale && $('max-height').value === 'custom') $('max-height').value = '0';
         $('rate-help').textContent = !enabled ? 'Basic compression is active. Enable advanced settings to edit these controls.' : ({target: 'Size limit is active. Video bitrate and CRF are automatic. Audio bitrate is a ceiling. Image quality may be reduced to fit.', bitrate: 'Size limit and CRF are off. Video and audio use the bitrates below. Images use Image quality. Output size can be larger than the source.', quality: 'Size limit and video bitrate are off. Video uses CRF with software encoding. Audio still uses Audio bitrate. Images use Image quality. Output size varies with content.'})[mode];
-        $('open-advanced').textContent = auto ? 'Advanced: automatic' : enabled ? 'Advanced: on' : 'Advanced…';
         $('open-advanced').classList.toggle('advanced-active', enabled);
         $('scale-slider').value = $('scale-percent').value;
     }
