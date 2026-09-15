@@ -10,7 +10,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [{"label":"main","title":"BlubberBound","width":1180,"height":900,"minWidth":1000,"minHeight":900,"center":true}],
+    "windows": [{"label":"main","title":"BlubberBound","width":1180,"height":1080,"minWidth":1000,"minHeight":1080,"center":true}],
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost",
       "assetProtocol": {"enable":true,"scope":[]}

@@ -73,6 +73,28 @@ fn safe_installer(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
         && name.to_ascii_lowercase().ends_with("-setup.exe")
 }
+fn artifact_storage_redirect(current: &reqwest::Url, next: &reqwest::Url) -> bool {
+    if !matches!(current.host_str(), Some("nightly.link" | "api.github.com"))
+        || next.scheme() != "https"
+        || next.port_or_known_default() != Some(443)
+        || !next.username().is_empty()
+        || next.password().is_some()
+        || next.fragment().is_some()
+        || !next.path().starts_with("/actions-results/")
+    {
+        return false;
+    }
+    let Some(shard) = next
+        .host_str()
+        .and_then(|host| host.strip_prefix("productionresultssa"))
+        .and_then(|host| host.strip_suffix(".blob.core.windows.net"))
+    else {
+        return false;
+    };
+    !shard.is_empty()
+        && shard.bytes().all(|b| b.is_ascii_digit())
+        && next.query_pairs().any(|(key, _)| key == "sig")
+}
 fn redirect_target(
     current: &reqwest::Url,
     location: &str,
@@ -84,7 +106,7 @@ fn redirect_target(
     let next = current
         .join(location)
         .map_err(|_| SourceError::from("The update redirect is invalid."))?;
-    if !safe_url(next.as_str()) {
+    if !safe_url(next.as_str()) && !artifact_storage_redirect(current, &next) {
         return Err("The update server redirected to an untrusted address.".into());
     }
     let authenticated = authenticated && current.host_str() == next.host_str();
@@ -1280,6 +1302,29 @@ mod tests {
         assert!(!redirect_target(&initial, "/other", false).unwrap().1);
     }
     #[test]
+    fn alpha_install_accepts_github_artifact_storage_redirect_without_exposing_credentials() {
+        let initial = reqwest::Url::parse("https://nightly.link/mkiera/BlubberBound/actions/runs/34996500040/BlubberBound-Setup.zip").unwrap();
+        let location = "https://productionresultssa4.blob.core.windows.net/actions-results/example?se=2026-09-15T00%3A00%3A00Z&sig=example";
+        assert!(!safe_url(location));
+        let (target, authenticated) = redirect_target(&initial, location, false).unwrap();
+        assert_eq!(
+            target.host_str(),
+            Some("productionresultssa4.blob.core.windows.net")
+        );
+        assert!(!authenticated);
+        for rejected in [
+            "https://productionresultssa4.blob.core.windows.net/other/example?sig=example",
+            "https://productionresultssa4.blob.core.windows.net/actions-results/example",
+            "https://productionresultssa4.blob.core.windows.net.evil.example/actions-results/example?sig=example",
+            "https://attacker.blob.core.windows.net/actions-results/example?sig=example",
+            "http://productionresultssa4.blob.core.windows.net/actions-results/example?sig=example",
+        ] {
+            assert!(redirect_target(&initial, rejected, false).is_err(), "{rejected}");
+        }
+        let unrelated = reqwest::Url::parse("https://github.com/mkiera/BlubberBound").unwrap();
+        assert!(redirect_target(&unrelated, location, false).is_err());
+    }
+    #[test]
     fn redirect_rejects_untrusted_hosts_credentials_and_control_characters() {
         let initial = reqwest::Url::parse("https://api.github.com/file").unwrap();
         for location in [
@@ -1511,6 +1556,39 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["run_id"], 11);
         assert_eq!(rows[0]["running"], false);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn stable_client_install_action_prepares_selected_alpha_installer() {
+        let folder = tempfile::tempdir().unwrap();
+        let updater = Updater::new(profile(), folder.path().to_owned(), "1.0.0".into());
+        let path = folder.path().join("alpha-Setup.exe");
+        fs::write(&path, b"MZtest").unwrap();
+        let rows = alpha_rows(
+            &json!([{"id":10,"run_number":1,"head_branch":"auto/auto-compression","head_sha":"abcd","conclusion":"success"}]),
+            &json!([{"name":"auto/auto-compression"}]),
+            &json!({}),
+            &profile(),
+        );
+        {
+            let mut state = updater.inner.state.lock().unwrap();
+            state.preferences["channel"] = json!("alpha");
+            state.rows = rows;
+            state.downloaded.insert("alpha:10".into(), path.clone());
+        }
+        updater
+            .action("install_update", json!(["alpha:10"]), false)
+            .unwrap();
+        assert_eq!(updater.snapshot()["download"]["active"], true);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let ready = loop {
+            if let Some(path) = updater.poll_ready_install() {
+                break path;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(ready, path);
     }
     #[test]
     fn preferences_preserve_unknown_fields() {

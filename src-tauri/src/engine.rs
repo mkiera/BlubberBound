@@ -356,7 +356,7 @@ fn run(
     total: ProgressTotal,
     stage: &str,
     timeout: Option<Duration>,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     check(cancel)?;
     let mut child = command(ffmpeg)
         .args(["-stats_period", "0.1"])
@@ -369,8 +369,16 @@ fn run(
     let stderr = child.stderr.take().unwrap();
     let completed = Arc::new(AtomicU64::new(0));
     let read_completed = completed.clone();
+    let frames = Arc::new(AtomicU64::new(0));
+    let read_frames = frames.clone();
     let reader = thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some(count) = line
+                .strip_prefix("frame=")
+                .and_then(|value| value.trim().parse().ok())
+            {
+                read_frames.fetch_max(count, Ordering::Relaxed);
+            }
             if let Some(count) = total.count(&line) {
                 read_completed.fetch_max(count, Ordering::Relaxed);
             }
@@ -438,7 +446,7 @@ fn run(
         }
         _ => {}
     }
-    Ok(())
+    Ok(frames.load(Ordering::Relaxed))
 }
 fn encoder(
     ffmpeg: &Path,
@@ -628,6 +636,18 @@ fn audio_args(
     } else {
         rate
     };
+    if s(o, "compression_mode") == "auto" && codec == "flac" {
+        add(
+            args,
+            &[
+                "-ac",
+                &(n(&info["audio_channels"]) as u32).to_string(),
+                "-ar",
+                &(n(&info["audio_sample_rate"]) as u32).to_string(),
+            ],
+        );
+        return Ok(());
+    }
     if codec == "libmp3lame"
         && ((sr == 22050.0 && rate > 160000.0) || (sr >= 32000.0 && rate < 32000.0))
     {
@@ -777,6 +797,7 @@ fn encode_media(
             "mp3" => "libmp3lame",
             "m4a" | "aac" => "aac",
             "ogg" => "libvorbis",
+            "flac" => "flac",
             _ => "libopus",
         }
     }
@@ -839,7 +860,7 @@ fn encode_media(
                     "-vf",
                     &filter,
                     "-pix_fmt",
-                    if preserve {
+                    if preserve || s(&o, "compression_mode") == "auto" {
                         s(info, "pixel_format")
                     } else if original_odd {
                         "yuv444p"
@@ -872,7 +893,15 @@ fn encode_media(
                 );
             }
             preset_args(&mut args, &codec, &o);
-            if b(&p, "has_audio") {
+            if s(&o, "compression_mode") == "auto" {
+                add(
+                    &mut args,
+                    &[
+                        "-map", "0:a?", "-c:a", "copy", "-map", "0:s?", "-c:s", "copy", "-map",
+                        "0:t?", "-c:t", "copy",
+                    ],
+                );
+            } else if b(&p, "has_audio") {
                 let ac = if s(&o, "video_format") == "webm" {
                     "libopus"
                 } else {
@@ -1301,6 +1330,511 @@ fn encode_image(
     fs::copy(&best_output, output).map_err(|e| e.to_string())?;
     Ok(if jpeg { "mjpeg" } else { "libwebp" }.into())
 }
+fn decoded_hash(
+    path: &Path,
+    kind: &str,
+    orientation: u16,
+    cancel: &AtomicBool,
+) -> Result<String, String> {
+    let ffmpeg = tool("ffmpeg").ok_or("FFmpeg was not found.")?;
+    let mut args = vec![
+        "-hide_banner".into(),
+        "-v".into(),
+        "error".into(),
+        "-noautorotate".into(),
+        "-i".into(),
+        path.to_string_lossy().into_owned(),
+    ];
+    if kind == "audio" {
+        add(&mut args, &["-map", "0:a:0", "-c:a", "pcm_s32le"]);
+    } else {
+        let transform = match orientation {
+            2 => "hflip,",
+            3 => "hflip,vflip,",
+            4 => "vflip,",
+            5 => "transpose=clock,hflip,",
+            6 => "transpose=clock,",
+            7 => "transpose=clock,vflip,",
+            8 => "transpose=cclock,",
+            _ => "",
+        };
+        add(
+            &mut args,
+            &[
+                "-map",
+                "0:v:0",
+                "-vf",
+                &format!("{transform}format=rgba"),
+                "-frames:v",
+                "1",
+            ],
+        );
+    }
+    add(&mut args, &["-f", "hash", "-hash", "SHA256", "-"]);
+    let output = capture(&ffmpeg, &args, cancel, Duration::from_secs(7200))?;
+    let digest = String::from_utf8_lossy(&output).trim().to_string();
+    if !digest.starts_with("SHA256=") {
+        return Err("Decoded content could not be compared.".into());
+    }
+    Ok(digest)
+}
+fn parse_frame_count(data: &str) -> Result<u64, String> {
+    let mut counts = data
+        .lines()
+        .filter_map(|line| line.trim().parse::<u64>().ok());
+    let first = counts
+        .next()
+        .filter(|count| *count > 0)
+        .ok_or("Video frames could not be counted.")?;
+    if counts.all(|count| count == first) {
+        Ok(first)
+    } else {
+        Err("Video frame counts disagree between streams.".into())
+    }
+}
+fn counted_frames(path: &Path, cancel: &AtomicBool) -> Result<u64, String> {
+    let ffprobe = tool("ffprobe").ok_or("FFprobe was not found.")?;
+    let args = [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-count_frames",
+        "-show_entries",
+        "stream=nb_read_frames",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        &path.to_string_lossy(),
+    ]
+    .map(String::from);
+    parse_frame_count(&String::from_utf8_lossy(&capture(
+        &ffprobe,
+        &args,
+        cancel,
+        Duration::from_secs(7200),
+    )?))
+}
+fn source_frame_count(info: &Value, source: &Path, cancel: &AtomicBool) -> Result<u64, String> {
+    let frames = n(&info["frame_count"]);
+    if frames > 0.0 && frames.fract() == 0.0 {
+        Ok(frames as u64)
+    } else {
+        counted_frames(source, cancel)
+    }
+}
+fn visual_score(
+    source: &Path,
+    output: &Path,
+    info: &Value,
+    cancel: &AtomicBool,
+    progress: &impl Fn(f64, &str),
+    sample: Option<(f64, f64)>,
+    source_frames: Option<u64>,
+) -> Result<(f64, f64), String> {
+    let ffmpeg = tool("ffmpeg").ok_or("FFmpeg was not found.")?;
+    let stats = output.with_extension("ssim-stats");
+    let (w, h) = (n(&info["width"]) as u32, n(&info["height"]) as u32);
+    let fps = n(&info["fps"]).max(1.0);
+    let filter = format!("[0:v]settb=AVTB,setpts=N/({fps}*TB),scale={w}:{h},setsar=1,format=yuv444p16le[ref];[1:v]settb=AVTB,setpts=N/({fps}*TB),format=yuv444p16le[encoded];[encoded][ref]ssim=eof_action=pass:repeatlast=0:stats_file={}[comparison]", stats.to_string_lossy().replace('\\', "/").replace(':', "\\\\\\:"));
+    let mut args = vec![];
+    add(&mut args, &["-hide_banner", "-v", "error", "-nostdin"]);
+    if let Some((start, duration)) = sample {
+        add(
+            &mut args,
+            &["-ss", &start.to_string(), "-t", &duration.to_string()],
+        );
+    }
+    add(
+        &mut args,
+        &[
+            "-i",
+            &source.to_string_lossy(),
+            "-i",
+            &output.to_string_lossy(),
+            "-filter_complex",
+            &filter,
+            "-map",
+            "[comparison]",
+            "-an",
+            "-progress",
+            "pipe:1",
+            "-f",
+            "null",
+            "-",
+        ],
+    );
+    let produced = run(
+        &ffmpeg,
+        &args,
+        cancel,
+        progress,
+        ProgressTotal::media(
+            info,
+            &json!({}),
+            sample.map_or(n(&info["duration"]), |(_, duration)| duration),
+            sample.is_some(),
+        ),
+        "Comparing visual quality",
+        None,
+    )?;
+    let data = fs::read_to_string(&stats).map_err(|e| e.to_string())?;
+    let scores: Vec<f64> = data
+        .lines()
+        .filter_map(|line| {
+            line.split_whitespace().find_map(|field| {
+                field
+                    .strip_prefix("All:")
+                    .and_then(|score| score.parse().ok())
+            })
+        })
+        .collect();
+    let expected = if sample.is_some() {
+        None
+    } else if let Some(frames) = source_frames {
+        Some(frames)
+    } else {
+        Some(source_frame_count(info, source, cancel)?)
+    };
+    if produced == 0
+        || scores.len() as u64 != produced
+        || expected.is_some_and(|frames| frames != produced)
+    {
+        return Err(format!("Video frame counts changed during auto compression: source {}, output {produced}, compared {}.", expected.map_or("sample".to_owned(), |frames| frames.to_string()), scores.len()));
+    }
+    let mean = scores.iter().sum::<f64>() / scores.len() as f64;
+    let worst = scores.iter().copied().fold(1.0, f64::min);
+    Ok((mean, worst))
+}
+fn auto_sample_windows(duration: f64, pixels_per_second: f64) -> Vec<(f64, f64)> {
+    // Sampling lost to full search at 59 million pixels and won at 221 million on the benchmark fixture.
+    if duration < 20.0 || duration * pixels_per_second < 200_000_000.0 {
+        return vec![];
+    }
+    let length = (duration / 8.0).min(0.75);
+    let last = duration - length;
+    (0..5)
+        .map(|index| (last * (index as f64 + 0.5) / 5.0, length))
+        .collect()
+}
+fn sampled_quality_passes(scores: &[(f64, f64)]) -> bool {
+    !scores.is_empty()
+        && scores.iter().map(|score| score.0).sum::<f64>() / scores.len() as f64 >= 0.9955
+        && scores.iter().all(|score| score.1 >= 0.9865)
+}
+fn sampled_auto_candidate(
+    source: &Path,
+    output: &Path,
+    info: &Value,
+    options: &Value,
+    cancel: &AtomicBool,
+    progress: &impl Fn(f64, &str),
+) -> Result<Option<String>, String> {
+    let windows = auto_sample_windows(
+        n(&info["duration"]),
+        n(&info["width"]) * n(&info["height"]) * n(&info["fps"]),
+    );
+    if windows.is_empty() {
+        return Ok(None);
+    }
+    let sample_output = output.with_extension("auto-sample.mkv");
+    let original_size = n(&info["size"]) as u64;
+    let mut low = 8;
+    let mut high = 35;
+    let mut chosen = None;
+    let mut extended = false;
+    for attempt in 0..9 {
+        if low > high {
+            if chosen == Some(35) && !extended {
+                low = 36;
+                high = 51;
+                extended = true;
+            } else {
+                break;
+            }
+        }
+        check(cancel)?;
+        let crf = (low + high) / 2;
+        let mut trial = options.clone();
+        trial["crf"] = json!(crf);
+        trial["preset"] = json!("slow");
+        let mut scores = Vec::with_capacity(windows.len());
+        for (index, window) in windows.iter().copied().enumerate() {
+            let encode_progress = |percent: f64, _: &str| {
+                progress(
+                    ((attempt as f64 + (index as f64 + percent / 200.0) / windows.len() as f64)
+                        / 9.0
+                        * 30.0)
+                        .min(30.0),
+                    "Auto quality: sampling candidate",
+                )
+            };
+            encode_media(
+                source,
+                &sample_output,
+                original_size as f64,
+                &trial,
+                info,
+                cancel,
+                &encode_progress,
+                Some(window),
+            )?;
+            let sample_info = probe_cancel(&sample_output, cancel)?;
+            if sample_info["width"] != info["width"] || sample_info["height"] != info["height"] {
+                return Ok(None);
+            }
+            let compare_progress = |percent: f64, _: &str| {
+                progress(
+                    ((attempt as f64
+                        + (index as f64 + 0.5 + percent / 200.0) / windows.len() as f64)
+                        / 9.0
+                        * 30.0)
+                        .min(30.0),
+                    "Auto quality: comparing sample",
+                )
+            };
+            let score = match visual_score(
+                source,
+                &sample_output,
+                info,
+                cancel,
+                &compare_progress,
+                Some(window),
+                None,
+            ) {
+                Ok(score) => score,
+                Err(error) if error.starts_with("Video frame counts changed") => return Ok(None),
+                Err(error) => return Err(error),
+            };
+            scores.push(score);
+        }
+        if sampled_quality_passes(&scores) {
+            chosen = Some(crf);
+            low = crf + 1;
+        } else {
+            high = crf - 1;
+        }
+    }
+    let Some(crf) = chosen else {
+        return Ok(None);
+    };
+    let source_frames = source_frame_count(info, source, cancel)?;
+    let candidates = if crf > 0 {
+        vec![crf, (crf - 4).max(0)]
+    } else {
+        vec![crf]
+    };
+    for (attempt, crf) in candidates.into_iter().enumerate() {
+        check(cancel)?;
+        let mut trial = options.clone();
+        trial["crf"] = json!(crf);
+        trial["preset"] = json!("slow");
+        let (base, encode_span, compare_span) = if attempt == 0 {
+            (30.0, 40.0, 15.0)
+        } else {
+            (85.0, 9.0, 4.0)
+        };
+        let encode_progress = |percent: f64, _: &str| {
+            progress(
+                base + percent / 100.0 * encode_span,
+                &format!(
+                    "Auto quality: encoding full file (pass {}, {percent:.0}%)",
+                    attempt + 1
+                ),
+            )
+        };
+        let codec = encode_media(
+            source,
+            output,
+            original_size as f64,
+            &trial,
+            info,
+            cancel,
+            &encode_progress,
+            None,
+        )?;
+        let encoded = probe_cancel(output, cancel)?;
+        if encoded["width"] != info["width"]
+            || encoded["height"] != info["height"]
+            || (n(&encoded["duration"]) - n(&info["duration"])).abs() > 0.1
+        {
+            continue;
+        }
+        let compare_progress = |percent: f64, _: &str| {
+            progress(
+                base + encode_span + percent / 100.0 * compare_span,
+                &format!(
+                    "Auto quality: verifying full file (pass {}, {percent:.0}%)",
+                    attempt + 1
+                ),
+            )
+        };
+        let (mean, worst) = match visual_score(
+            source,
+            output,
+            info,
+            cancel,
+            &compare_progress,
+            None,
+            Some(source_frames),
+        ) {
+            Ok(score) => score,
+            Err(error) if error.starts_with("Video frame counts changed") => continue,
+            Err(error) => return Err(error),
+        };
+        if mean >= 0.995
+            && worst >= 0.985
+            && fs::metadata(output).map_err(|e| e.to_string())?.len() < original_size
+        {
+            progress(98.0, "Auto quality: verified full file");
+            return Ok(Some(codec));
+        }
+    }
+    Ok(None)
+}
+fn auto_candidate(
+    source: &Path,
+    output: &Path,
+    info: &Value,
+    options: &Value,
+    cancel: &AtomicBool,
+    progress: &impl Fn(f64, &str),
+) -> Result<Option<String>, String> {
+    let original_size = n(&info["size"]) as u64;
+    if s(info, "kind") == "video" {
+        let sampled = !auto_sample_windows(
+            n(&info["duration"]),
+            n(&info["width"]) * n(&info["height"]) * n(&info["fps"]),
+        )
+        .is_empty();
+        let fallback_base = if sampled { 70.0 } else { 0.0 };
+        let fallback_span = if sampled { 24.0 } else { 94.0 };
+        let reported = Mutex::new(0.0_f64);
+        let report = |percent: f64, stage: &str| {
+            let mut current = reported.lock().unwrap();
+            *current = current.max(percent);
+            progress(*current, stage);
+        };
+        if sampled {
+            return sampled_auto_candidate(source, output, info, options, cancel, &report);
+        }
+        let mut low = 8;
+        let mut high = 51;
+        let mut best = None;
+        let best_path = output.with_extension("auto-best");
+        let source_frames = source_frame_count(info, source, cancel)?;
+        for attempt in 0..6 {
+            if low > high {
+                break;
+            }
+            check(cancel)?;
+            let crf = (low + high) / 2;
+            let mut trial = options.clone();
+            trial["crf"] = json!(crf);
+            trial["preset"] = json!("slow");
+            let encode_progress = |percent: f64, _: &str| {
+                report(
+                    (fallback_base + (attempt as f64 + percent / 200.0) / 6.0 * fallback_span)
+                        .min(94.0),
+                    "Auto quality: encoding candidate",
+                )
+            };
+            let codec = encode_media(
+                source,
+                output,
+                original_size as f64,
+                &trial,
+                info,
+                cancel,
+                &encode_progress,
+                None,
+            )?;
+            let encoded = probe_cancel(output, cancel)?;
+            if encoded["width"] != info["width"]
+                || encoded["height"] != info["height"]
+                || (n(&encoded["duration"]) - n(&info["duration"])).abs() > 0.1
+            {
+                return Ok(None);
+            }
+            let compare_progress = |percent: f64, _: &str| {
+                report(
+                    (fallback_base
+                        + (attempt as f64 + 0.5 + percent / 200.0) / 6.0 * fallback_span)
+                        .min(94.0),
+                    "Auto quality: comparing frames",
+                )
+            };
+            let (mean, worst) = match visual_score(
+                source,
+                output,
+                info,
+                cancel,
+                &compare_progress,
+                None,
+                Some(source_frames),
+            ) {
+                Ok(score) => score,
+                Err(error) if error.starts_with("Video frame counts changed") => return Ok(None),
+                Err(error) => return Err(error),
+            };
+            if mean >= 0.995 && worst >= 0.985 {
+                let size = fs::metadata(output).map_err(|e| e.to_string())?.len();
+                if size < original_size
+                    && best
+                        .as_ref()
+                        .map_or(true, |(previous, _): &(u64, String)| size < *previous)
+                {
+                    fs::copy(output, &best_path).map_err(|e| e.to_string())?;
+                    best = Some((size, codec));
+                }
+                low = crf + 1;
+            } else {
+                high = crf - 1;
+            }
+        }
+        if let Some((_, codec)) = best {
+            fs::copy(&best_path, output).map_err(|e| e.to_string())?;
+            return Ok(Some(codec));
+        }
+        return Ok(None);
+    }
+    let codec = if s(info, "kind") == "image" {
+        encode_image(
+            source,
+            output,
+            original_size as f64,
+            options,
+            info,
+            cancel,
+            progress,
+        )?
+    } else {
+        encode_media(
+            source,
+            output,
+            original_size as f64,
+            options,
+            info,
+            cancel,
+            progress,
+            None,
+        )?
+    };
+    if fs::metadata(output).map_err(|e| e.to_string())?.len() >= original_size {
+        return Ok(None);
+    }
+    let original = decoded_hash(
+        source,
+        s(info, "kind"),
+        n(&info["orientation"]) as u16,
+        cancel,
+    )?;
+    let encoded = decoded_hash(output, s(info, "kind"), 1, cancel)?;
+    Ok(if original == encoded {
+        Some(codec)
+    } else {
+        None
+    })
+}
 pub fn compress(
     source: &Path,
     destination: &Path,
@@ -1319,6 +1853,11 @@ pub fn preview(
     start: f64,
     duration: f64,
 ) -> Result<Value, String> {
+    if options["compression_mode"] == "auto" {
+        return Err(
+            "Auto quality compares the full file. Switch to Size limit for a short preview.".into(),
+        );
+    }
     if !start.is_finite()
         || !duration.is_finite()
         || start < 0.0
@@ -1382,12 +1921,26 @@ fn export(
         .tempdir_in(parent)
         .map_err(|e| e.to_string())?;
     let output = temp.path().join(format!("output.{extension}"));
-    let codec = if s(&info, "kind") == "image" {
-        encode_image(&source, &output, target, &o, &info, cancel, progress)?
+    let selected = if s(&o, "compression_mode") == "auto" {
+        auto_candidate(&source, &output, &info, &o, cancel, progress)?
+    } else if s(&info, "kind") == "image" {
+        Some(encode_image(
+            &source, &output, target, &o, &info, cancel, progress,
+        )?)
     } else {
-        encode_media(
+        Some(encode_media(
             &source, &output, target, &o, &info, cancel, progress, sample,
-        )?
+        )?)
+    };
+    let Some(codec) = selected else {
+        check(cancel)?;
+        progress(
+            100.0,
+            "Original is smallest without detectable quality loss",
+        );
+        return Ok(
+            json!({"path":source,"size":info["size"],"original_size":info["size"],"kind":info["kind"],"encoder":"original","width":info["width"],"height":info["height"],"duration_seconds":info["duration"],"fps":info["fps"],"preserved_original":true,"warning":"Original kept: no smaller output passed the quality checks."}),
+        );
     };
     check(cancel)?;
     let size = fs::metadata(&output).map_err(|e| e.to_string())?.len();
@@ -1634,6 +2187,486 @@ mod tests {
         )
         .unwrap();
         path
+    }
+    #[test]
+    fn auto_image_retains_exact_pixels_and_never_expands_the_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = fixture(
+            temp.path(),
+            "source.png",
+            "testsrc=size=128x96:rate=1",
+            &["-frames:v", "1"],
+        );
+        let result = compress(
+            &source,
+            &temp.path().join("auto.webp"),
+            &json!({"compression_mode":"auto","target_mb":0.1,"image_quality":5,"max_height":480}),
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        assert!(n(&result["size"]) <= fs::metadata(&source).unwrap().len() as f64);
+        if result["preserved_original"] != true {
+            assert_eq!(
+                decoded_hash(&source, "image", 1, &AtomicBool::new(false)).unwrap(),
+                decoded_hash(
+                    Path::new(result["path"].as_str().unwrap()),
+                    "image",
+                    1,
+                    &AtomicBool::new(false)
+                )
+                .unwrap()
+            );
+            assert_eq!(result["width"], 128);
+            assert_eq!(result["height"], 96);
+        } else {
+            assert_eq!(
+                Path::new(result["path"].as_str().unwrap()),
+                source.canonicalize().unwrap()
+            );
+        }
+    }
+    #[test]
+    fn auto_audio_is_sample_exact_or_keeps_original() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = fixture(
+            temp.path(),
+            "source.wav",
+            "sine=frequency=440:sample_rate=44100",
+            &["-t", "2"],
+        );
+        let result = compress(
+            &source,
+            &temp.path().join("auto.flac"),
+            &json!({"compression_mode":"auto","target_mb":0.1,"audio_sample_rate":22050}),
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        assert!(n(&result["size"]) <= fs::metadata(&source).unwrap().len() as f64);
+        if result["preserved_original"] != true {
+            assert_eq!(
+                decoded_hash(&source, "audio", 1, &AtomicBool::new(false)).unwrap(),
+                decoded_hash(
+                    Path::new(result["path"].as_str().unwrap()),
+                    "audio",
+                    1,
+                    &AtomicBool::new(false)
+                )
+                .unwrap()
+            );
+            assert_eq!(result["encoder"], "flac");
+        }
+    }
+    #[test]
+    fn auto_keeps_small_original_instead_of_publishing_a_larger_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = fixture(
+            temp.path(),
+            "tiny.mp3",
+            "sine=frequency=440:sample_rate=44100",
+            &["-t", "2", "-b:a", "8k"],
+        );
+        let destination = temp.path().join("tiny.flac");
+        let result = compress(
+            &source,
+            &destination,
+            &json!({"compression_mode":"auto"}),
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(result["preserved_original"], true);
+        assert_eq!(
+            Path::new(result["path"].as_str().unwrap()),
+            source.canonicalize().unwrap()
+        );
+        assert!(!destination.exists());
+    }
+    #[test]
+    fn auto_video_preserves_audio_stream_when_it_produces_a_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = fixture(
+            temp.path(),
+            "with-audio.mp4",
+            "testsrc2=size=160x120:rate=12",
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=44100",
+                "-t",
+                "1",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "8",
+                "-c:a",
+                "aac",
+            ],
+        );
+        let result = compress(
+            &source,
+            &temp.path().join("with-audio.mkv"),
+            &json!({"compression_mode":"auto"}),
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        if result["preserved_original"] != true {
+            let original = probe(&source).unwrap();
+            let encoded = probe(Path::new(result["path"].as_str().unwrap())).unwrap();
+            assert_eq!(encoded["audio_codec"], original["audio_codec"]);
+            assert_eq!(
+                decoded_hash(&source, "audio", 1, &AtomicBool::new(false)).unwrap(),
+                decoded_hash(
+                    Path::new(result["path"].as_str().unwrap()),
+                    "audio",
+                    1,
+                    &AtomicBool::new(false)
+                )
+                .unwrap()
+            );
+        }
+    }
+    #[test]
+    fn auto_samples_reserve_quality_margin_before_full_encoding() {
+        assert!(!sampled_quality_passes(&[(0.995, 0.989); 5]));
+        assert!(sampled_quality_passes(&[(0.997, 0.990); 5]));
+    }
+    #[test]
+    fn auto_comparison_rejects_short_and_long_outputs() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = fixture(
+            temp.path(),
+            "source.mkv",
+            "testsrc2=size=160x120:rate=12",
+            &["-frames:v", "12", "-c:v", "libx264"],
+        );
+        let info = probe(&source).unwrap();
+        for frames in [11, 13] {
+            let output = fixture(
+                temp.path(),
+                &format!("output-{frames}.mkv"),
+                "testsrc2=size=160x120:rate=12",
+                &["-frames:v", &frames.to_string(), "-c:v", "libx264"],
+            );
+            let error = visual_score(
+                &source,
+                &output,
+                &info,
+                &AtomicBool::new(false),
+                &|_, _| {},
+                None,
+                Some(12),
+            )
+            .unwrap_err();
+            assert!(error.starts_with("Video frame counts changed"), "{error}");
+        }
+    }
+    #[test]
+    #[ignore = "Requires a local benchmark video in BLUBBERBOUND_BENCH_SOURCE"]
+    fn auto_real_video_benchmark() {
+        let source = PathBuf::from(std::env::var_os("BLUBBERBOUND_BENCH_SOURCE").unwrap());
+        let temp = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        let previous = Mutex::new(String::new());
+        let encodes = AtomicU64::new(0);
+        let selection_seconds = AtomicU64::new(0);
+        let result = compress(
+            &source,
+            &temp.path().join("result.mkv"),
+            &json!({"compression_mode":"auto"}),
+            &AtomicBool::new(false),
+            |_, stage| {
+                let stage = stage.split(", ").next().unwrap();
+                let mut previous = previous.lock().unwrap();
+                if *previous != stage {
+                    eprintln!("{:.2}s: {stage}", started.elapsed().as_secs_f64());
+                    if stage.contains("encoding full file") {
+                        if encodes.fetch_add(1, Ordering::Relaxed) == 0 {
+                            selection_seconds.store(started.elapsed().as_secs(), Ordering::Relaxed);
+                        }
+                    }
+                    *previous = stage.to_owned();
+                }
+            },
+        )
+        .unwrap();
+        eprintln!(
+            "Finished in {:.2}s: {result}",
+            started.elapsed().as_secs_f64()
+        );
+        assert_ne!(result["preserved_original"], true);
+        assert!(encodes.load(Ordering::Relaxed) <= 2);
+        assert!(selection_seconds.load(Ordering::Relaxed) < 60);
+        assert!(started.elapsed() < Duration::from_secs(360));
+    }
+    #[test]
+    fn auto_sampling_only_runs_when_full_frame_work_is_large() {
+        assert!(auto_sample_windows(8.0, 1920.0 * 1080.0 * 30.0).is_empty());
+        assert!(auto_sample_windows(32.0, 320.0 * 240.0 * 24.0).is_empty());
+        let windows = auto_sample_windows(120.0, 320.0 * 240.0 * 24.0);
+        assert_eq!(windows.len(), 5);
+        assert_eq!(windows[0], (11.925, 0.75));
+        assert_eq!(windows[4], (107.325, 0.75));
+        assert_eq!(auto_sample_windows(32.0, 1920.0 * 1080.0 * 30.0).len(), 5);
+    }
+    #[test]
+    fn auto_sample_quality_is_judged_across_scenes() {
+        let scores = [(0.997, 0.994), (0.994, 0.991), (0.999, 0.999)];
+        assert!(sampled_quality_passes(&scores));
+        assert!(sampled_quality_passes(&[
+            (0.996, 0.990),
+            (0.997, 0.990),
+            (0.9966, 0.990)
+        ]));
+        assert!(!sampled_quality_passes(&[
+            (0.997, 0.994),
+            (0.992, 0.980),
+            (0.999, 0.999)
+        ]));
+        assert!(!sampled_quality_passes(&[
+            (0.992, 0.990),
+            (0.992, 0.990),
+            (0.992, 0.990)
+        ]));
+    }
+    #[test]
+    fn duplicate_frame_count_entries_are_accepted_when_equal() {
+        assert_eq!(parse_frame_count("6462\r\n6462\r\n").unwrap(), 6462);
+        assert!(parse_frame_count("6462\r\n6461\r\n").is_err());
+        assert!(parse_frame_count("N/A\r\n").is_err());
+        assert_eq!(
+            source_frame_count(
+                &json!({"frame_count":6462}),
+                Path::new("nonexistent-video.mp4"),
+                &AtomicBool::new(false)
+            )
+            .unwrap(),
+            6462
+        );
+    }
+    #[test]
+    fn auto_visual_comparison_pairs_equal_frames_across_container_timebases() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = fixture(
+            temp.path(),
+            "comparison-source.mp4",
+            "testsrc2=size=320x240:rate=24",
+            &[
+                "-t",
+                "8",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "10",
+            ],
+        );
+        let output = fixture(
+            temp.path(),
+            "comparison-output.mkv",
+            "testsrc2=size=320x240:rate=24",
+            &[
+                "-t", "8", "-c:v", "libx264", "-preset", "slow", "-crf", "25",
+            ],
+        );
+        assert_eq!(
+            counted_frames(&source, &AtomicBool::new(false)).unwrap(),
+            192
+        );
+        assert_eq!(
+            counted_frames(&output, &AtomicBool::new(false)).unwrap(),
+            192
+        );
+        visual_score(
+            &source,
+            &output,
+            &probe(&source).unwrap(),
+            &AtomicBool::new(false),
+            &|_, _| {},
+            None,
+            None,
+        )
+        .unwrap();
+    }
+    #[test]
+    fn auto_video_search_avoids_repeated_full_file_encodes() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = fixture(
+            temp.path(),
+            "search-source.mp4",
+            "testsrc2=size=320x240:rate=24",
+            &[
+                "-t",
+                "120",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "10",
+            ],
+        );
+        let stages = Mutex::new(Vec::<String>::new());
+        let start = Instant::now();
+        let result = compress(
+            &source,
+            &temp.path().join("search-result.mkv"),
+            &json!({"compression_mode":"auto"}),
+            &AtomicBool::new(false),
+            |_, stage| {
+                let stage = stage.split(", ").next().unwrap();
+                let mut stages = stages.lock().unwrap();
+                if stages.last().is_none_or(|previous| previous != stage) {
+                    stages.push(stage.to_owned());
+                }
+            },
+        )
+        .unwrap();
+        let full_encodes = stages
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|stage| {
+                stage.starts_with("Auto quality: encoding candidate")
+                    || stage.starts_with("Auto quality: encoding full file")
+            })
+            .count();
+        assert!(
+            full_encodes <= 2,
+            "Auto encoded the full file {full_encodes} times in {:?}",
+            start.elapsed()
+        );
+        if result["preserved_original"] != true {
+            let score = visual_score(
+                &source,
+                Path::new(result["path"].as_str().unwrap()),
+                &probe(&source).unwrap(),
+                &AtomicBool::new(false),
+                &|_, _| {},
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(score.0 >= 0.995 && score.1 >= 0.985);
+        }
+    }
+    #[test]
+    fn auto_stops_after_two_rejected_full_encodes() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = fixture(
+            temp.path(),
+            "source.mp4",
+            "testsrc2=size=320x240:rate=24",
+            &[
+                "-t",
+                "120",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "10",
+            ],
+        );
+        let mut info = probe(&source).unwrap();
+        info["frame_count"] = json!(n(&info["frame_count"]) + 1.0);
+        let previous = Mutex::new(String::new());
+        let encodes = AtomicU64::new(0);
+        let result = auto_candidate(
+            &source,
+            &temp.path().join("output.mkv"),
+            &info,
+            &settings::effective(&json!({"compression_mode":"auto"})).unwrap(),
+            &AtomicBool::new(false),
+            &|_, stage| {
+                let stage = stage.split(", ").next().unwrap();
+                let mut previous = previous.lock().unwrap();
+                if *previous != stage
+                    && (stage.contains("encoding full file")
+                        || stage.contains("encoding candidate"))
+                {
+                    encodes.fetch_add(1, Ordering::Relaxed);
+                }
+                *previous = stage.to_owned();
+            },
+        )
+        .unwrap();
+        assert!(result.is_none());
+        assert_eq!(encodes.load(Ordering::Relaxed), 2);
+    }
+    #[test]
+    fn auto_video_rejects_mismatched_frames_and_keeps_geometry() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = fixture(
+            temp.path(),
+            "source.mp4",
+            "testsrc2=size=160x120:rate=12",
+            &[
+                "-t",
+                "1",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "10",
+            ],
+        );
+        let wrong = fixture(
+            temp.path(),
+            "wrong.mkv",
+            "color=black:size=160x120:rate=12",
+            &["-t", "1", "-c:v", "libx264"],
+        );
+        let score = visual_score(
+            &source,
+            &wrong,
+            &probe(&source).unwrap(),
+            &AtomicBool::new(false),
+            &|_, _| {},
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(score.0 < 0.995 || score.1 < 0.985);
+        let result = compress(
+            &source,
+            &temp.path().join("auto.mkv"),
+            &json!({"compression_mode":"auto","target_mb":0.1,"scale_percent":50,"fps":6}),
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        assert!(n(&result["size"]) <= fs::metadata(&source).unwrap().len() as f64);
+        if result["preserved_original"] != true {
+            assert_eq!(result["width"], 160);
+            assert_eq!(result["height"], 120);
+            assert_eq!(
+                counted_frames(&source, &AtomicBool::new(false)).unwrap(),
+                counted_frames(
+                    Path::new(result["path"].as_str().unwrap()),
+                    &AtomicBool::new(false)
+                )
+                .unwrap()
+            );
+            let score = visual_score(
+                &source,
+                Path::new(result["path"].as_str().unwrap()),
+                &probe(&source).unwrap(),
+                &AtomicBool::new(false),
+                &|_, _| {},
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(score.0 >= 0.995 && score.1 >= 0.985);
+        }
     }
     #[test]
     fn real_image_quality_lossless_and_preview() {

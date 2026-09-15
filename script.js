@@ -9,6 +9,15 @@ function formatBytes(value) {
     return `${(bytes / 1000 ** exponent).toLocaleString('en-US', {maximumFractionDigits: 1})} ${units[exponent - 1]}`;
 }
 
+function completionLabel(job) {
+    const kept = job.preserved_original && job.output === job.source;
+    const seconds = job.elapsed_seconds;
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return kept ? 'Original kept' : 'Complete';
+    const minutes = String(Math.floor(seconds / 60)).padStart(2, '0');
+    const remainder = String(Math.floor(seconds % 60)).padStart(2, '0');
+    return `${kept ? 'Original kept' : 'Completed'} in ${minutes}:${remainder}`;
+}
+
 function savingsLabel(original, output) {
     if (!(original > 0) || !Number.isFinite(output)) return '';
     const percent = Math.round((1 - output / original) * 100);
@@ -18,11 +27,12 @@ function savingsLabel(original, output) {
 const advancedDefaults = {advanced_enabled: false, rate_control: 'target', video_bitrate_kbps: 2500, audio_bitrate_kbps: 128, crf: 23, scale_percent: 100, output_width: 0, output_height: 0, fps: 0, preset: 'veryfast', audio_channels: 0, audio_sample_rate: 0, mute_audio: false, image_quality: 90, image_lossless: false, strip_metadata: true};
 
 function validateSettings(settings) {
+    if (!['limit', 'auto'].includes(settings.compression_mode ?? 'limit')) throw new Error('Choose a compression mode.');
     const target = Number(settings.target_mb);
     if (!Number.isFinite(target) || target < 0.1 || target > 100000) {
         throw new Error('Choose a size limit from 0.1 to 100,000 MB.');
     }
-    const result = {...advancedDefaults, ...settings, target_mb: target};
+    const result = {...advancedDefaults, ...settings, compression_mode: settings.compression_mode ?? 'limit', target_mb: target};
     const bounds = {video_bitrate_kbps: [12, 100000], audio_bitrate_kbps: [8, 320], crf: [0, 51], scale_percent: [10, 200], output_width: [0, 7680], output_height: [0, 7680], fps: [0, 120], image_quality: [1, 100]};
     for (const [key, [min, max]] of Object.entries(bounds)) {
         const number = Number(result[key]);
@@ -55,17 +65,18 @@ function previewSettingsChanged(previous, current) {
     };
     previous = effective(previous);
     current = effective(current);
-    const keys = ['target_mb', 'video_format', 'audio_format', 'image_format', 'max_height', 'encoder', ...Object.keys(advancedDefaults)];
+    const keys = ['compression_mode', 'target_mb', 'video_format', 'audio_format', 'image_format', 'max_height', 'encoder', ...Object.keys(advancedDefaults)];
     return keys.some(key => String(previous?.[key] ?? advancedDefaults[key]) !== String(current?.[key] ?? advancedDefaults[key]));
 }
 
 function canReplaceOutput(job, settings) {
-    const format = settings?.[`${job?.kind}_format`];
+    if (!job?.output || job.preserved_original || job.output === job.source) return false;
+    const format = settings?.compression_mode === 'auto' ? ({video: 'mkv', audio: 'flac', image: 'webp'})[job?.kind] : settings?.[`${job?.kind}_format`];
     const extension = format === 'jpeg' ? 'jpg' : format;
     return Boolean(job?.output && extension && job.output.toLowerCase().endsWith(`.${extension}`));
 }
 
-if (typeof module !== 'undefined') module.exports = {formatBytes, savingsLabel, validateSettings, advancedDefaults, previewRange, previewSettingsChanged, canReplaceOutput};
+if (typeof module !== 'undefined') module.exports = {formatBytes, completionLabel, savingsLabel, validateSettings, advancedDefaults, previewRange, previewSettingsChanged, canReplaceOutput};
 
 if (typeof document !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1' && !window.desktop) {
     const previewUpdates = {
@@ -84,7 +95,7 @@ if (typeof document !== 'undefined' && new URLSearchParams(window.location.searc
         branding: previewUpdates.branding, version: '1.0.0', tools: {ffmpeg: true, ffprobe: true},
         settings: {target_mb: 25, video_format: 'mp4', audio_format: 'mp3', image_format: 'webp', max_height: 0, encoder: 'auto', output_dir: ''},
         jobs: [
-            {id: 'video', name: 'A quiet morning at the beach.mp4', source: 'Demo files / beach.mp4', kind: 'video', duration: 120, original_size: 86500000, status: 'completed', percent: 100, stage: 'Finished', output: 'Demo files / beach-compressed.mp4', output_size: 24100000},
+            {id: 'video', name: 'A quiet morning at the beach.mp4', source: 'Demo files / beach.mp4', kind: 'video', duration: 120, original_size: 86500000, status: 'completed', percent: 100, stage: 'Completed', elapsed_seconds: 337, output: 'Demo files / beach-compressed.mp4', output_size: 24100000},
             {id: 'audio', name: 'Ocean ambience.wav', source: 'Demo files / ocean.wav', kind: 'audio', duration: 90, original_size: 52000000, status: 'pending', percent: 0, stage: ''},
             {id: 'image', name: 'An exceptionally long holiday photograph filename with spaces and punctuation.jpg', source: 'Demo files / photograph.jpg', kind: 'image', original_size: 8300000, status: 'failed', percent: 0, stage: '', error: 'Example error: the source file is unavailable. Check its location and retry.'},
         ], running: false, flipperclipper: true, updates: previewUpdates,
@@ -154,6 +165,7 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         }
         return validateSettings({
             ...advanced,
+            compression_mode: $('compression-mode').value,
             target_mb: $('target-mb').value,
             video_format: $('video-format').value,
             audio_format: $('audio-format').value,
@@ -175,15 +187,16 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
     }
 
     function renderAdvanced() {
-        const enabled = $('advanced-enabled').checked;
+        const auto = $('compression-mode').value === 'auto';
+        const enabled = $('advanced-enabled').checked && !auto;
         const mode = $('rate-control').value;
         const sizeMode = !enabled || mode === 'target';
         $('advanced-controls').classList.toggle('inactive-controls', !enabled);
         $('advanced-controls').querySelectorAll('input, select').forEach(input => { input.disabled = !enabled; });
         $('video-bitrate').disabled = !enabled || mode !== 'bitrate';
         $('crf').disabled = !enabled || mode !== 'quality';
-        $('target-mb').disabled = !sizeMode;
-        document.querySelectorAll('[data-target]').forEach(button => { button.disabled = !sizeMode; });
+        $('target-mb').disabled = auto || !sizeMode;
+        document.querySelectorAll('[data-target]').forEach(button => { button.disabled = auto || !sizeMode; });
         const forceSoftware = enabled && mode === 'quality';
         $('encoder').disabled = forceSoftware;
         if (forceSoftware) {
@@ -202,13 +215,19 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
             const label = input.closest('label');
             if (label) label.classList.toggle('inactive-controls', input.disabled);
         });
-        $('target-help').textContent = sizeMode ? 'Smaller limits trade detail for size. If the limit cannot be met, the smallest output produced is saved with a warning.' : 'Advanced mode controls quality or bitrate. Output size is not limited.';
+        $('target-help').textContent = auto ? 'Auto quality uses a separate target for each file. The size limit is ignored.' : sizeMode ? 'Smaller limits trade detail for size. If the limit cannot be met, the smallest output produced is saved with a warning.' : 'Advanced mode controls quality or bitrate. Output size is not limited.';
+        $('basic-formats').hidden = auto;
+        $('auto-formats-info').hidden = !auto;
+        $('encoder').hidden = auto;
+        $('encoder-label').hidden = auto;
+        $('auto-encoder-label').hidden = !auto;
+        $('auto-encoder-info').hidden = !auto;
+        for (const id of ['video-format', 'audio-format', 'image-format', 'max-height', 'encoder', 'open-advanced']) $(id).disabled = auto;
         const customScale = enabled && (Number($('scale-percent').value) !== 100 || Number($('output-width').value) > 0 || Number($('output-height').value) > 0);
         $('custom-resolution').hidden = !customScale;
         if (customScale && $('max-height').value === '0') $('max-height').value = 'custom';
         if (!customScale && $('max-height').value === 'custom') $('max-height').value = '0';
         $('rate-help').textContent = !enabled ? 'Basic compression is active. Enable advanced settings to edit these controls.' : ({target: 'Size limit is active. Video bitrate and CRF are automatic. Audio bitrate is a ceiling. Image quality may be reduced to fit.', bitrate: 'Size limit and CRF are off. Video and audio use the bitrates below. Images use Image quality. Output size can be larger than the source.', quality: 'Size limit and video bitrate are off. Video uses CRF with software encoding. Audio still uses Audio bitrate. Images use Image quality. Output size varies with content.'})[mode];
-        $('open-advanced').textContent = enabled ? 'Advanced: on' : 'Advanced…';
         $('open-advanced').classList.toggle('advanced-active', enabled);
         $('scale-slider').value = $('scale-percent').value;
     }
@@ -312,6 +331,7 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         let settings;
         try { settings = readSettings(); } catch { settings = state?.settings; }
         const compatible = canReplaceOutput(job, settings);
+        $('rerun-format-help').textContent = job?.output === job?.source ? 'The original file cannot be replaced. Choose Another copy.' : 'The output format changed. Choose Another copy to use the new format.';
         $('rerun-format-help').hidden = compatible;
         $('rerun-replace').disabled = !compatible || !ready || busy > 0 || state?.running || state?.preview?.status === 'running';
     }
@@ -345,13 +365,14 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         const savings = done ? savingsLabel(job.original_size, job.output_size) : '';
         query('.job-meta').textContent = `${formatBytes(job.original_size)}${done ? ` → ${formatBytes(job.output_size)}${savings ? ` / ${savings}` : ''}` : ` / ${job.kind || 'file'}`}`;
         const percent = Math.max(0, Math.min(100, Number(job.percent) || 0));
-        query('.job-status').textContent = ({pending: 'Queued', probing: 'Reading file', running: `${Math.round(percent)}%`, completed: 'Complete', failed: 'Failed', cancelled: 'Cancelled'})[job.status] || job.status;
+        query('.job-status').textContent = done ? completionLabel(job) : ({pending: 'Queued', probing: 'Reading file', running: `${Math.round(percent)}%`, failed: 'Failed', cancelled: 'Cancelled'})[job.status] || job.status;
         const progress = query('progress');
         progress.hidden = !active.has(job.status);
         progress.value = percent;
         progress.setAttribute('aria-label', `Compression progress: ${job.name}`);
-        query('.job-stage').textContent = job.stage || '';
-        query('.job-stage').hidden = !job.stage;
+        const stage = done && job.stage === 'Completed' && Number.isFinite(job.elapsed_seconds) && job.elapsed_seconds >= 0 ? '' : job.stage || '';
+        query('.job-stage').textContent = stage;
+        query('.job-stage').hidden = !stage;
         query('.job-error').textContent = job.error || '';
         query('.job-error').hidden = !job.error;
         query('.job-output').textContent = done && job.output ? job.output : '';
@@ -364,7 +385,7 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         buttons.remove_job.hidden = active.has(job.status);
         for (const button of Object.values(buttons)) button.disabled = busy > 0 || !ready;
         const processing = state.running || state.preview?.status === 'running';
-        buttons.quality_preview.hidden = active.has(job.status) || !['video', 'audio', 'image'].includes(job.kind);
+        buttons.quality_preview.hidden = $('compression-mode').value === 'auto' || active.has(job.status) || !['video', 'audio', 'image'].includes(job.kind);
         buttons.quality_preview.disabled ||= processing || !state.tools?.ffmpeg || !state.tools?.ffprobe;
         buttons.remove_job.disabled ||= processing;
         buttons.retry_job.disabled ||= processing;
@@ -388,7 +409,7 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         const available = ready && !busy;
         const previewRunning = next.preview?.status === 'running';
         const processing = next.running || previewRunning;
-        $('settings-advanced').disabled = !available || processing;
+        $('settings-advanced').disabled = !available || processing || $('compression-mode').value === 'auto';
         const hasPending = next.jobs.some(job => job.status === 'pending');
         const hasCompleted = next.jobs.some(job => job.status === 'completed' && job.output);
         const hasActive = next.jobs.some(job => active.has(job.status));
@@ -399,7 +420,7 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         $('queue-count').textContent = `${count} ${count === 1 ? 'file' : 'files'}`;
         $('empty-queue').hidden = count > 0;
         for (const id of ['add-files', 'add-folder']) $(id).disabled = !available;
-        for (const id of ['choose-output', 'use-source', 'open-advanced']) $(id).disabled = !available || processing;
+        for (const id of ['choose-output', 'use-source', 'open-advanced']) $(id).disabled = !available || processing || (id === 'open-advanced' && $('compression-mode').value === 'auto');
         $('settings-fields').disabled = !available || processing;
         $('advanced-fields').disabled = !available || processing;
         $('save-advanced').disabled = !available || processing;

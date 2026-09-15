@@ -10,7 +10,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tempfile::{NamedTempFile, TempDir};
 
@@ -97,7 +97,7 @@ fn text(value: &Value, key: &str) -> String {
     value[key].as_str().unwrap_or_default().to_string()
 }
 fn new_job(source: &Path) -> Value {
-    json!({"id":uuid::Uuid::new_v4().simple().to_string(),"source":source.to_string_lossy(),"name":source.file_name().unwrap_or_default().to_string_lossy(),"kind":"","original_size":0,"status":"probing","percent":0,"stage":"Reading file","error":"","output":"","output_size":0,"duration":0.0,"width":0,"height":0})
+    json!({"id":uuid::Uuid::new_v4().simple().to_string(),"source":source.to_string_lossy(),"name":source.file_name().unwrap_or_default().to_string_lossy(),"kind":"","original_size":0,"status":"probing","percent":0,"stage":"Reading file","error":"","output":"","output_size":0,"duration":0.0,"elapsed_seconds":-1,"width":0,"height":0})
 }
 fn merge(target: &mut Value, source: &Value) {
     if let (Some(target), Some(source)) = (target.as_object_mut(), source.as_object()) {
@@ -191,6 +191,7 @@ impl Controller {
                                     "error",
                                     "status",
                                     "duration",
+                                    "elapsed_seconds",
                                     "width",
                                     "height",
                                 ] {
@@ -430,7 +431,16 @@ impl Controller {
         thread::spawn(move || owner.run(only));
     }
     fn destination(source: &Path, kind: &str, options: &Value) -> Result<PathBuf, String> {
-        let mut extension = text(options, &format!("{kind}_format"));
+        let mut extension = if text(options, "compression_mode") == "auto" {
+            match kind {
+                "video" => "mkv".into(),
+                "audio" => "flac".into(),
+                "image" => "webp".into(),
+                _ => String::new(),
+            }
+        } else {
+            text(options, &format!("{kind}_format"))
+        };
         if extension == "jpeg" {
             extension = "jpg".into();
         }
@@ -490,13 +500,14 @@ impl Controller {
                 self.cancel.store(false, Ordering::SeqCst);
                 merge(
                     &mut s.jobs[index],
-                    &json!({"status":"running","stage":"Preparing","error":"","percent":0}),
+                    &json!({"status":"running","stage":"Preparing","error":"","percent":0,"elapsed_seconds":-1}),
                 );
                 let job = s.jobs[index].clone();
                 let replacement = s.replacements.remove(&text(&job, "id"));
                 self.save(&mut s);
                 (job, s.settings.clone(), replacement)
             };
+            let started = Instant::now();
             let id = text(&job, "id");
             let replacing = replacement.is_some();
             let progress = |percent: f64, stage: &str| {
@@ -530,6 +541,13 @@ impl Controller {
                     if self.cancel.load(Ordering::SeqCst) {
                         return Err("Cancelled".into());
                     }
+                    if result["preserved_original"] == true {
+                        result["path"] = json!(target.to_string_lossy());
+                        result["size"] =
+                            json!(fs::metadata(&target).map_err(|e| e.to_string())?.len());
+                        result["warning"] = json!("Previous compressed copy kept: no smaller output passed the quality checks.");
+                        return Ok(result);
+                    }
                     if identity(&target).map_err(|e| format!("Checking previous output: {e}"))?
                         != expected
                     {
@@ -551,7 +569,7 @@ impl Controller {
             })();
             let mut s = self.inner.lock().unwrap();
             if let Ok(result) = &result {
-                if replacing {
+                if replacing && result["preserved_original"] != true {
                     for previous in &mut s.jobs {
                         if previous["output"] == result["path"] {
                             previous["output_size"] = result["size"].clone();
@@ -564,7 +582,7 @@ impl Controller {
                 match result {
                     Ok(result) => merge(
                         current,
-                        &json!({"status":"completed","stage":result["warning"].as_str().unwrap_or("Completed"),"warning":result["warning"],"percent":100,"output":result["path"],"output_size":result["size"]}),
+                        &json!({"status":"completed","stage":result["warning"].as_str().unwrap_or("Completed"),"warning":result["warning"],"preserved_original":result["preserved_original"] == true,"percent":100,"output":result["path"],"output_size":result["size"],"elapsed_seconds":started.elapsed().as_secs()}),
                     ),
                     Err(error) => {
                         let cancelled = self.cancel.load(Ordering::SeqCst)
@@ -695,7 +713,16 @@ impl Controller {
                         "The previous output points to the source. Choose another copy.".into(),
                     );
                 }
-                let format = text(&s.settings, &format!("{}_format", text(&old, "kind")));
+                let format = if text(&s.settings, "compression_mode") == "auto" {
+                    match text(&old, "kind").as_str() {
+                        "video" => "mkv".into(),
+                        "audio" => "flac".into(),
+                        "image" => "webp".into(),
+                        _ => String::new(),
+                    }
+                } else {
+                    text(&s.settings, &format!("{}_format", text(&old, "kind")))
+                };
                 let extension = target
                     .extension()
                     .unwrap_or_default()
@@ -723,6 +750,9 @@ impl Controller {
     pub fn start_preview(self: &Arc<Self>, id: &str, start: f64, duration: f64) {
         let result = (|| -> Result<(PathBuf, PathBuf, Value, f64), String> {
             let mut s = self.inner.lock().unwrap();
+            if text(&s.settings, "compression_mode") == "auto" {
+                return Err("Auto quality compares the full file. Switch to Size limit for a short preview.".into());
+            }
             if s.closed || s.installing || s.running || s.preview["status"] == "running" {
                 return Err("Finish the current operation before creating a preview.".into());
             }
@@ -846,13 +876,16 @@ mod tests {
     fn restores_unknown_fields_and_completed_jobs() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
-        fs::write(&path,r#"{"future":42,"settings":{"target_mb":25,"future_option":9},"jobs":[{"source":"missing.mp4","status":"completed","output":"old.mp4"}]}"#).unwrap();
+        fs::write(&path,r#"{"future":42,"settings":{"target_mb":25,"future_option":9},"jobs":[{"source":"missing.mp4","status":"completed","output":"old.mp4","elapsed_seconds":337},{"source":"legacy.mp4","status":"completed"}]}"#).unwrap();
         let owner = Controller::new(path.clone());
         assert_eq!(owner.snapshot()["jobs"][0]["percent"], 100);
+        assert_eq!(owner.snapshot()["jobs"][0]["elapsed_seconds"], 337);
+        assert_eq!(owner.snapshot()["jobs"][1]["elapsed_seconds"], -1);
         owner.update_settings(json!({"target_mb":10}));
         let saved: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert_eq!(saved["future"], 42);
         assert_eq!(saved["settings"]["future_option"], 9);
+        assert_eq!(saved["jobs"][0]["elapsed_seconds"], 337);
     }
     #[test]
     fn invalid_settings_do_not_replace_previous() {
@@ -944,6 +977,53 @@ mod tests {
         Some(path)
     }
     #[test]
+    fn auto_rerun_keeps_previous_copy_when_original_is_smallest() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = engine::find_tools();
+        let Some(ffmpeg) = tools["ffmpeg"].as_str() else {
+            return;
+        };
+        let source = dir.path().join("small.mp3");
+        let status = std::process::Command::new(ffmpeg)
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=44100",
+                "-t",
+                "2",
+                "-b:a",
+                "8k",
+            ])
+            .arg(&source)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let owner = Controller::new(dir.path().join("state.json"));
+        owner.add_paths(vec![source.to_string_lossy().into_owned()]);
+        wait_for(&owner, |s| s["jobs"][0]["status"] == "pending");
+        owner.update_settings(json!({"audio_format":"flac","target_mb":10}));
+        owner.start_queue(None);
+        wait_for(&owner, |s| s["running"] == false);
+        let first = owner.snapshot()["jobs"][0].clone();
+        assert_eq!(first["status"], "completed", "{first}");
+        assert!(first["elapsed_seconds"].as_u64().is_some());
+        let output = PathBuf::from(text(&first, "output"));
+        let previous = fs::read(&output).unwrap();
+        let id = text(&first, "id");
+        owner.update_settings(json!({"compression_mode":"auto"}));
+        owner.rerun(&id, "replace");
+        wait_for(&owner, |s| s["running"] == false);
+        let second = owner.snapshot()["jobs"][1].clone();
+        assert_eq!(second["status"], "completed", "{second}");
+        assert!(second["elapsed_seconds"].as_u64().is_some());
+        assert_eq!(PathBuf::from(text(&second, "output")), output);
+        assert_eq!(second["preserved_original"], true);
+        assert_eq!(fs::read(&output).unwrap(), previous);
+    }
+    #[test]
     fn real_queue_preview_copy_replace_and_state_restore() {
         let dir = tempfile::tempdir().unwrap();
         let Some(source) = fixture(dir.path()) else {
@@ -978,6 +1058,7 @@ mod tests {
         wait_for(&owner, |s| s["running"] == false);
         let third = owner.snapshot()["jobs"][2].clone();
         assert_eq!(third["status"], "completed", "{third}");
+        assert!(third["elapsed_seconds"].as_u64().is_some());
         assert_eq!(third["output"], first["output"]);
         assert_ne!(fs::read(&output).unwrap(), first_data);
         assert_eq!(fs::read(&source).unwrap(), original);
@@ -985,6 +1066,10 @@ mod tests {
         let restored = Controller::new(state_path);
         assert_eq!(restored.snapshot()["jobs"].as_array().unwrap().len(), 3);
         assert_eq!(restored.snapshot()["settings"]["scale_percent"], 75.0);
+        assert_eq!(
+            restored.snapshot()["jobs"][2]["elapsed_seconds"],
+            third["elapsed_seconds"]
+        );
         restored.close();
     }
     #[test]
