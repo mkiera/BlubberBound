@@ -4,6 +4,7 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+- Fix in-app alpha installation by accepting GitHub's signed artifact-storage redirect from nightly.link without sending credentials to the storage host.
 - Add Auto quality compression for each queued file. It searches for the smallest video candidate that passes frame comparisons, checks image pixels and audio samples exactly, and keeps the original when no smaller output passes.
 
 ## 1.0.0-beta.5 - 2026-09-12
