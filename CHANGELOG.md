@@ -4,6 +4,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+## 1.1.0-beta.2 - 2026-09-15
+
 - Fix Auto quality sometimes keeping the original despite a smaller valid output. Search short sections across longer videos to choose quality faster.
 - Bundle FFmpeg 9.0 so copied AAC audio stays aligned in Auto quality's MKV output.
 - Keep the Advanced button in the heading row when Auto quality is selected, and leave it disabled. Remove the compression mode description and add space before Size limit.
