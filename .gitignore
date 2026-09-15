@@ -18,3 +18,4 @@ frontend-dist/
 src-tauri/target/
 src-tauri/gen/
 src-tauri/build-config.json
+*.af
