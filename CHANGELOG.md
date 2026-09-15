@@ -4,6 +4,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+## 1.1.0-beta.3 - 2026-09-15
+
 - Speed up Auto video verification by counting output frames during the comparison, removing a second full decode.
 - Choose Auto settings with a quality margin and limit long videos to one full encode plus one retry. Show the current pass and percentage during encoding and verification.
 
