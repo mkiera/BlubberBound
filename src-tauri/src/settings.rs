@@ -13,7 +13,7 @@ pub const PRESETS: [&str; 9] = [
 ];
 
 pub fn defaults() -> Value {
-    json!({"target_mb":10,"video_format":"mp4","audio_format":"mp3","image_format":"webp","max_height":0,"encoder":"auto","advanced_enabled":false,"rate_control":"target","video_bitrate_kbps":2500,"audio_bitrate_kbps":128,"crf":23,"scale_percent":100,"output_width":0,"output_height":0,"fps":0,"preset":"veryfast","audio_channels":0,"audio_sample_rate":0,"mute_audio":false,"image_quality":90,"image_lossless":false,"strip_metadata":true})
+    json!({"compression_mode":"limit","target_mb":10,"video_format":"mp4","audio_format":"mp3","image_format":"webp","max_height":0,"encoder":"auto","advanced_enabled":false,"rate_control":"target","video_bitrate_kbps":2500,"audio_bitrate_kbps":128,"crf":23,"scale_percent":100,"output_width":0,"output_height":0,"fps":0,"preset":"veryfast","audio_channels":0,"audio_sample_rate":0,"mute_audio":false,"image_quality":90,"image_lossless":false,"strip_metadata":true})
 }
 
 pub fn validate(input: &Value) -> Result<Value, String> {
@@ -38,8 +38,12 @@ pub fn validate(input: &Value) -> Result<Value, String> {
         }
     }
     for (key, choices) in [
+        ("compression_mode", vec!["limit", "auto"]),
         ("video_format", vec!["mp4", "webm", "mkv", "mov"]),
-        ("audio_format", vec!["mp3", "opus", "m4a", "aac", "ogg"]),
+        (
+            "audio_format",
+            vec!["mp3", "opus", "m4a", "aac", "ogg", "flac"],
+        ),
         ("image_format", vec!["webp", "jpeg"]),
         ("encoder", vec!["auto", "software"]),
         ("rate_control", vec!["target", "bitrate", "quality"]),
@@ -96,6 +100,7 @@ pub fn effective(input: &Value) -> Result<Value, String> {
     if output["advanced_enabled"] == false {
         for (key, value) in defaults().as_object().unwrap() {
             if ![
+                "compression_mode",
                 "target_mb",
                 "video_format",
                 "audio_format",
@@ -111,6 +116,22 @@ pub fn effective(input: &Value) -> Result<Value, String> {
     }
     if output["rate_control"] == "quality" {
         output["encoder"] = json!("software");
+    }
+    if output["compression_mode"] == "auto" {
+        output["video_format"] = json!("mkv");
+        output["audio_format"] = json!("flac");
+        output["image_format"] = json!("webp");
+        output["advanced_enabled"] = json!(true);
+        output["rate_control"] = json!("quality");
+        output["encoder"] = json!("software");
+        output["max_height"] = json!(0);
+        output["scale_percent"] = json!(100);
+        output["output_width"] = json!(0);
+        output["output_height"] = json!(0);
+        output["fps"] = json!(0);
+        output["mute_audio"] = json!(false);
+        output["image_lossless"] = json!(true);
+        output["strip_metadata"] = json!(false);
     }
     Ok(output)
 }
@@ -143,5 +164,17 @@ mod tests {
                 ["encoder"],
             "software"
         );
+    }
+    #[test]
+    fn auto_mode_ignores_size_and_visual_degradation_controls() {
+        let options = effective(&json!({"compression_mode":"auto","target_mb":1,"advanced_enabled":true,"rate_control":"bitrate","video_bitrate_kbps":100,"scale_percent":50,"max_height":480,"fps":15,"encoder":"auto","mute_audio":true,"image_lossless":false})).unwrap();
+        assert_eq!(options["compression_mode"], "auto");
+        assert_eq!(options["rate_control"], "quality");
+        assert_eq!(options["scale_percent"], 100);
+        assert_eq!(options["max_height"], 0);
+        assert_eq!(options["fps"], 0);
+        assert_eq!(options["encoder"], "software");
+        assert_eq!(options["mute_audio"], false);
+        assert_eq!(options["image_lossless"], true);
     }
 }

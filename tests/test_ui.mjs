@@ -47,6 +47,19 @@ test('rejects invalid size limits before calling the desktop bridge', () => {
     assert.equal(validateSettings({target_mb: '25'}).target_mb, 25);
 });
 
+test('auto quality mode is distinct from a size limit and invalid modes are rejected', () => {
+    const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    assert.match(html, /name="compression_mode"[^>]*>[^<]*<option value="limit"[^>]*>[^<]*<\/option><option value="auto"/);
+    assert.equal(validateSettings({target_mb: 25, compression_mode: 'auto'}).compression_mode, 'auto');
+    assert.throws(() => validateSettings({target_mb: 25, compression_mode: 'unknown'}), /compression mode/i);
+    const source = fs.readFileSync(new URL('../script.js', import.meta.url), 'utf8');
+    assert.match(source, /\$\('target-mb'\)\.disabled = auto/);
+    assert.match(source, /buttons\.quality_preview\.hidden = \$\('compression-mode'\)\.value === 'auto'/);
+    assert.match(source, /\$\('basic-formats'\)\.hidden = auto/);
+    assert.match(source, /\$\('encoder'\)\.hidden = auto/);
+    assert.match(html, /id="auto-formats-info"[^>]*>Auto uses MKV video, FLAC audio, and lossless WebP images/);
+});
+
 test('every static DOM lookup resolves in its window', () => {
     for (const [htmlFile, scriptFile, pattern] of [
         ['index.html', 'script.js', /\$\('([^']+)'\)/g],
@@ -99,7 +112,7 @@ test('settings remain expanded and the desktop window reserves room for them', (
     assert.doesNotMatch(css, /\.settings-options\s*\{[^}]*overflow\s*:\s*(auto|scroll|hidden)/);
     const app = JSON.parse(fs.readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
     assert.equal(app.app.windows[0].minWidth, 1000);
-    assert.equal(app.app.windows[0].minHeight, 900);
+    assert.equal(app.app.windows[0].minHeight, 1080);
 });
 
 test('main window uses plain headings and reserves tool status for errors', () => {
@@ -159,6 +172,7 @@ test('stale preview checks use effective settings and ignore output folder', () 
     assert.equal(previewSettingsChanged(base, {...base, target_mb: 10}), true);
     assert.equal(previewSettingsChanged({...base, advanced_enabled: true, rate_control: 'quality', encoder: 'software'}, {...base, advanced_enabled: true, rate_control: 'quality'}), false);
     assert.equal(previewSettingsChanged({...base, advanced_enabled: true}, {...base, advanced_enabled: true, scale_percent: 50}), true);
+    assert.equal(previewSettingsChanged(base, {...base, compression_mode: 'auto'}), true);
 });
 
 test('replacing a previous output requires the same output extension', () => {
@@ -166,6 +180,9 @@ test('replacing a previous output requires the same output extension', () => {
     assert.equal(canReplaceOutput({kind: 'video', output: 'C:/output/clip.mp4'}, {video_format: 'webm'}), false);
     assert.equal(canReplaceOutput({kind: 'image', output: 'photo.jpg'}, {image_format: 'jpeg'}), true);
     assert.equal(canReplaceOutput({kind: 'image'}, {image_format: 'jpeg'}), false);
+    assert.equal(canReplaceOutput({kind: 'video', output: 'C:/output/clip.mkv'}, {compression_mode: 'auto', video_format: 'mp4'}), true);
+    assert.equal(canReplaceOutput({kind: 'video', output: 'C:/output/clip.mp4'}, {compression_mode: 'auto', video_format: 'mp4'}), false);
+    assert.equal(canReplaceOutput({kind: 'video', output: 'C:/source.mp4', source: 'C:/source.mp4'}, {video_format: 'mp4'}), false);
     const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     for (const label of ['Another copy', 'Replace previous output', 'Cancel']) assert.ok(html.includes(label));
     const script = fs.readFileSync(new URL('../script.js', import.meta.url), 'utf8');

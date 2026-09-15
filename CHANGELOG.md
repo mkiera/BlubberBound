@@ -4,6 +4,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+- Add Auto quality compression for each queued file. It searches for the smallest video candidate that passes frame comparisons, checks image pixels and audio samples exactly, and keeps the original when no smaller output passes.
+
 ## 1.0.0-beta.5 - 2026-09-12
 
 - Fix in-app updates by exiting promptly after starting the installer and allowing older versions to close before replacing application files.
