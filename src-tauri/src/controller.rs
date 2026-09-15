@@ -430,7 +430,16 @@ impl Controller {
         thread::spawn(move || owner.run(only));
     }
     fn destination(source: &Path, kind: &str, options: &Value) -> Result<PathBuf, String> {
-        let mut extension = text(options, &format!("{kind}_format"));
+        let mut extension = if text(options, "compression_mode") == "auto" {
+            match kind {
+                "video" => "mkv".into(),
+                "audio" => "flac".into(),
+                "image" => "webp".into(),
+                _ => String::new(),
+            }
+        } else {
+            text(options, &format!("{kind}_format"))
+        };
         if extension == "jpeg" {
             extension = "jpg".into();
         }
@@ -530,6 +539,13 @@ impl Controller {
                     if self.cancel.load(Ordering::SeqCst) {
                         return Err("Cancelled".into());
                     }
+                    if result["preserved_original"] == true {
+                        result["path"] = json!(target.to_string_lossy());
+                        result["size"] =
+                            json!(fs::metadata(&target).map_err(|e| e.to_string())?.len());
+                        result["warning"] = json!("Previous compressed copy kept: no smaller output passed the quality checks.");
+                        return Ok(result);
+                    }
                     if identity(&target).map_err(|e| format!("Checking previous output: {e}"))?
                         != expected
                     {
@@ -551,7 +567,7 @@ impl Controller {
             })();
             let mut s = self.inner.lock().unwrap();
             if let Ok(result) = &result {
-                if replacing {
+                if replacing && result["preserved_original"] != true {
                     for previous in &mut s.jobs {
                         if previous["output"] == result["path"] {
                             previous["output_size"] = result["size"].clone();
@@ -564,7 +580,7 @@ impl Controller {
                 match result {
                     Ok(result) => merge(
                         current,
-                        &json!({"status":"completed","stage":result["warning"].as_str().unwrap_or("Completed"),"warning":result["warning"],"percent":100,"output":result["path"],"output_size":result["size"]}),
+                        &json!({"status":"completed","stage":result["warning"].as_str().unwrap_or("Completed"),"warning":result["warning"],"preserved_original":result["preserved_original"] == true,"percent":100,"output":result["path"],"output_size":result["size"]}),
                     ),
                     Err(error) => {
                         let cancelled = self.cancel.load(Ordering::SeqCst)
@@ -695,7 +711,16 @@ impl Controller {
                         "The previous output points to the source. Choose another copy.".into(),
                     );
                 }
-                let format = text(&s.settings, &format!("{}_format", text(&old, "kind")));
+                let format = if text(&s.settings, "compression_mode") == "auto" {
+                    match text(&old, "kind").as_str() {
+                        "video" => "mkv".into(),
+                        "audio" => "flac".into(),
+                        "image" => "webp".into(),
+                        _ => String::new(),
+                    }
+                } else {
+                    text(&s.settings, &format!("{}_format", text(&old, "kind")))
+                };
                 let extension = target
                     .extension()
                     .unwrap_or_default()
@@ -723,6 +748,9 @@ impl Controller {
     pub fn start_preview(self: &Arc<Self>, id: &str, start: f64, duration: f64) {
         let result = (|| -> Result<(PathBuf, PathBuf, Value, f64), String> {
             let mut s = self.inner.lock().unwrap();
+            if text(&s.settings, "compression_mode") == "auto" {
+                return Err("Auto quality compares the full file. Switch to Size limit for a short preview.".into());
+            }
             if s.closed || s.installing || s.running || s.preview["status"] == "running" {
                 return Err("Finish the current operation before creating a preview.".into());
             }
@@ -942,6 +970,51 @@ mod tests {
             .unwrap();
         assert!(result.success());
         Some(path)
+    }
+    #[test]
+    fn auto_rerun_keeps_previous_copy_when_original_is_smallest() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = engine::find_tools();
+        let Some(ffmpeg) = tools["ffmpeg"].as_str() else {
+            return;
+        };
+        let source = dir.path().join("small.mp3");
+        let status = std::process::Command::new(ffmpeg)
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=44100",
+                "-t",
+                "2",
+                "-b:a",
+                "8k",
+            ])
+            .arg(&source)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let owner = Controller::new(dir.path().join("state.json"));
+        owner.add_paths(vec![source.to_string_lossy().into_owned()]);
+        wait_for(&owner, |s| s["jobs"][0]["status"] == "pending");
+        owner.update_settings(json!({"audio_format":"flac","target_mb":10}));
+        owner.start_queue(None);
+        wait_for(&owner, |s| s["running"] == false);
+        let first = owner.snapshot()["jobs"][0].clone();
+        assert_eq!(first["status"], "completed", "{first}");
+        let output = PathBuf::from(text(&first, "output"));
+        let previous = fs::read(&output).unwrap();
+        let id = text(&first, "id");
+        owner.update_settings(json!({"compression_mode":"auto"}));
+        owner.rerun(&id, "replace");
+        wait_for(&owner, |s| s["running"] == false);
+        let second = owner.snapshot()["jobs"][1].clone();
+        assert_eq!(second["status"], "completed", "{second}");
+        assert_eq!(PathBuf::from(text(&second, "output")), output);
+        assert_eq!(second["preserved_original"], true);
+        assert_eq!(fs::read(&output).unwrap(), previous);
     }
     #[test]
     fn real_queue_preview_copy_replace_and_state_restore() {

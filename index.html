@@ -31,7 +31,7 @@
                     <div class="add-actions"><button id="add-files" class="button primary" disabled><span aria-hidden="true">+</span> Add files</button><button id="add-folder" class="button secondary" disabled>Add folder</button></div>
                 </div>
                 <div class="queue-toolbar"><span id="queue-status" role="status">Your queue is ready for files.</span><button id="clear-finished" class="text-button" disabled>Clear finished</button></div>
-                <div id="empty-queue" class="empty-queue"><span aria-hidden="true">☷</span><p>A smaller copy for every file.</p><small>Add files above, choose a size limit, and start compressing.</small></div>
+                <div id="empty-queue" class="empty-queue"><span aria-hidden="true">☷</span><p>A smaller copy for every file.</p><small>Add files above, choose a compression mode, and start compressing.</small></div>
                 <ol id="jobs" class="jobs" aria-label="Compression queue"></ol>
             </section>
 
@@ -39,17 +39,20 @@
                 <div class="panel-heading"><div><h2 id="settings-title" tabindex="-1">Compression settings</h2></div><button id="open-advanced" class="button secondary" aria-haspopup="dialog" disabled>Advanced…</button></div>
                 <form id="settings-form">
                     <fieldset id="settings-fields" disabled>
+                        <label class="field-label" for="compression-mode">Compression mode</label>
+                        <select id="compression-mode" name="compression_mode" aria-describedby="compression-mode-help"><option value="limit">Fit a size limit</option><option value="auto">Auto quality</option></select>
+                        <p class="help" id="compression-mode-help">Auto compares video frames and checks image pixels and audio samples exactly. It uses MKV, FLAC, or lossless WebP, and keeps the original if no smaller file passes.</p>
                         <label class="field-label" for="target-mb">Size limit <span>per file</span></label>
                         <div class="target-input"><input id="target-mb" name="target_mb" type="number" min="0.1" max="100000" step="any" value="25" required inputmode="decimal" aria-describedby="target-help"><span>MB</span></div>
                         <div class="presets" aria-label="Size presets"><button type="button" data-target="5">5 MB</button><button type="button" data-target="10">10 MB</button><button type="button" data-target="25" aria-pressed="true">25 MB</button><button type="button" data-target="50">50 MB</button><button type="button" data-target="100">100 MB</button></div>
                         <p class="help" id="target-help">Smaller limits trade detail for size. If the limit cannot be met, the smallest output produced is saved with a warning.</p>
-                        <div class="settings-options"><div class="field-section"><span class="field-label">Output formats</span><div class="format-grid">
+                        <div class="settings-options"><div class="field-section"><span class="field-label">Output formats</span><p id="auto-formats-info" class="help" hidden>Auto uses MKV video, FLAC audio, and lossless WebP images.</p><div id="basic-formats" class="format-grid">
                             <label for="video-format">Video<select id="video-format" name="video_format"><option value="mp4">MP4</option><option value="webm">WebM</option><option value="mkv">MKV</option><option value="mov">MOV</option></select></label>
-                            <label for="audio-format">Audio<select id="audio-format" name="audio_format"><option value="mp3">MP3</option><option value="opus">Opus</option><option value="m4a">M4A (AAC)</option><option value="aac">AAC</option><option value="ogg">Ogg (Vorbis)</option></select></label>
+                            <label for="audio-format">Audio<select id="audio-format" name="audio_format"><option value="mp3">MP3</option><option value="opus">Opus</option><option value="m4a">M4A (AAC)</option><option value="aac">AAC</option><option value="ogg">Ogg (Vorbis)</option><option value="flac">FLAC (lossless)</option></select></label>
                             <label for="image-format">Images<select id="image-format" name="image_format"><option value="webp">WebP</option><option value="jpeg">JPEG</option></select></label>
                         </div></div>
                         <div class="field-section"><label for="max-height" class="field-label">Maximum video height</label><select id="max-height" name="max_height"><option value="0">Keep original resolution</option><option value="custom" id="custom-resolution" disabled hidden>Advanced scaling</option><option value="2160">2160p / 4K</option><option value="1440">1440p</option><option value="1080">1080p / Full HD</option><option value="720">720p / HD</option><option value="480">480p</option></select></div>
-                        <div class="field-section"><label for="encoder" class="field-label">Video encoding</label><select id="encoder" name="encoder"><option value="auto">Auto / use hardware when available</option><option value="software">Software / CPU</option></select></div></div>
+                        <div class="field-section"><label id="encoder-label" for="encoder" class="field-label">Video encoding</label><span id="auto-encoder-label" class="field-label" hidden>Video encoding</span><p id="auto-encoder-info" class="help" hidden>Auto uses software encoding to compare multiple quality settings.</p><select id="encoder" name="encoder"><option value="auto">Auto / use hardware when available</option><option value="software">Software / CPU</option></select></div></div>
                     </fieldset>
                 </form>
                 <div class="destination"><span class="field-label">Save copies to</span><p id="output-dir" title="Each file's original folder">Each file’s original folder</p><div class="destination-actions"><button id="choose-output" class="text-button" disabled>Choose folder…</button><button id="use-source" class="text-button" disabled hidden>Use source folders</button></div></div>
@@ -73,7 +76,7 @@
         <label for="rerun-file">File<select id="rerun-file"></select></label>
         <p class="help">Another copy uses your current output folder. Replace previous output writes to this path after compression succeeds:</p>
         <p id="rerun-path" class="preview-name"></p>
-        <p id="rerun-format-help" class="help" hidden>The output format changed. Choose Another copy to use the new format.</p>
+        <p id="rerun-format-help" class="help" hidden>The original file cannot be replaced. Choose Another copy.</p>
         <p id="rerun-error" class="dialog-error" role="alert" hidden></p>
         <div class="dialog-actions"><button id="rerun-copy" class="button primary">Another copy</button><button id="rerun-replace" class="button secondary">Replace previous output</button><button id="cancel-rerun" class="button secondary">Cancel</button></div>
     </dialog>
