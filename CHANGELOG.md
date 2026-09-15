@@ -4,6 +4,13 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+## 1.1.0 - 2026-09-15
+
+- Add Auto quality compression for each queued file. It searches for smaller video output that passes frame comparisons, checks image pixels and audio samples exactly, and keeps the original when no smaller output passes.
+- Choose Auto video quality from short sections across the file, then verify the encoded output. Limit long videos to one full encode plus one retry, remove a redundant full decode, and show the current pass and percentage.
+- Bundle FFmpeg 9.0 so copied AAC audio stays aligned in Auto quality's MKV output.
+- Keep the Advanced button in the heading row when Auto quality is selected, and leave it disabled. Remove the compression mode description and add space before Size limit.
+- Fix in-app alpha installation by accepting GitHub's signed artifact storage redirect from nightly.link without sending credentials to the storage host.
 - Show each completed compression's elapsed time in minutes and seconds, and retain it after restarting the app.
 
 ## 1.1.0-beta.3 - 2026-09-15
