@@ -4,6 +4,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+- Show each completed compression's elapsed time in minutes and seconds, and retain it after restarting the app.
+
 ## 1.1.0-beta.3 - 2026-09-15
 
 - Speed up Auto video verification by counting output frames during the comparison, removing a second full decode.

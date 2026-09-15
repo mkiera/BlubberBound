@@ -9,6 +9,15 @@ function formatBytes(value) {
     return `${(bytes / 1000 ** exponent).toLocaleString('en-US', {maximumFractionDigits: 1})} ${units[exponent - 1]}`;
 }
 
+function completionLabel(job) {
+    const kept = job.preserved_original && job.output === job.source;
+    const seconds = job.elapsed_seconds;
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return kept ? 'Original kept' : 'Complete';
+    const minutes = String(Math.floor(seconds / 60)).padStart(2, '0');
+    const remainder = String(Math.floor(seconds % 60)).padStart(2, '0');
+    return `${kept ? 'Original kept' : 'Completed'} in ${minutes}:${remainder}`;
+}
+
 function savingsLabel(original, output) {
     if (!(original > 0) || !Number.isFinite(output)) return '';
     const percent = Math.round((1 - output / original) * 100);
@@ -67,7 +76,7 @@ function canReplaceOutput(job, settings) {
     return Boolean(job?.output && extension && job.output.toLowerCase().endsWith(`.${extension}`));
 }
 
-if (typeof module !== 'undefined') module.exports = {formatBytes, savingsLabel, validateSettings, advancedDefaults, previewRange, previewSettingsChanged, canReplaceOutput};
+if (typeof module !== 'undefined') module.exports = {formatBytes, completionLabel, savingsLabel, validateSettings, advancedDefaults, previewRange, previewSettingsChanged, canReplaceOutput};
 
 if (typeof document !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1' && !window.desktop) {
     const previewUpdates = {
@@ -86,7 +95,7 @@ if (typeof document !== 'undefined' && new URLSearchParams(window.location.searc
         branding: previewUpdates.branding, version: '1.0.0', tools: {ffmpeg: true, ffprobe: true},
         settings: {target_mb: 25, video_format: 'mp4', audio_format: 'mp3', image_format: 'webp', max_height: 0, encoder: 'auto', output_dir: ''},
         jobs: [
-            {id: 'video', name: 'A quiet morning at the beach.mp4', source: 'Demo files / beach.mp4', kind: 'video', duration: 120, original_size: 86500000, status: 'completed', percent: 100, stage: 'Finished', output: 'Demo files / beach-compressed.mp4', output_size: 24100000},
+            {id: 'video', name: 'A quiet morning at the beach.mp4', source: 'Demo files / beach.mp4', kind: 'video', duration: 120, original_size: 86500000, status: 'completed', percent: 100, stage: 'Completed', elapsed_seconds: 337, output: 'Demo files / beach-compressed.mp4', output_size: 24100000},
             {id: 'audio', name: 'Ocean ambience.wav', source: 'Demo files / ocean.wav', kind: 'audio', duration: 90, original_size: 52000000, status: 'pending', percent: 0, stage: ''},
             {id: 'image', name: 'An exceptionally long holiday photograph filename with spaces and punctuation.jpg', source: 'Demo files / photograph.jpg', kind: 'image', original_size: 8300000, status: 'failed', percent: 0, stage: '', error: 'Example error: the source file is unavailable. Check its location and retry.'},
         ], running: false, flipperclipper: true, updates: previewUpdates,
@@ -356,13 +365,14 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
         const savings = done ? savingsLabel(job.original_size, job.output_size) : '';
         query('.job-meta').textContent = `${formatBytes(job.original_size)}${done ? ` → ${formatBytes(job.output_size)}${savings ? ` / ${savings}` : ''}` : ` / ${job.kind || 'file'}`}`;
         const percent = Math.max(0, Math.min(100, Number(job.percent) || 0));
-        query('.job-status').textContent = done && job.preserved_original && job.output === job.source ? 'Original kept' : ({pending: 'Queued', probing: 'Reading file', running: `${Math.round(percent)}%`, completed: 'Complete', failed: 'Failed', cancelled: 'Cancelled'})[job.status] || job.status;
+        query('.job-status').textContent = done ? completionLabel(job) : ({pending: 'Queued', probing: 'Reading file', running: `${Math.round(percent)}%`, failed: 'Failed', cancelled: 'Cancelled'})[job.status] || job.status;
         const progress = query('progress');
         progress.hidden = !active.has(job.status);
         progress.value = percent;
         progress.setAttribute('aria-label', `Compression progress: ${job.name}`);
-        query('.job-stage').textContent = job.stage || '';
-        query('.job-stage').hidden = !job.stage;
+        const stage = done && job.stage === 'Completed' && Number.isFinite(job.elapsed_seconds) && job.elapsed_seconds >= 0 ? '' : job.stage || '';
+        query('.job-stage').textContent = stage;
+        query('.job-stage').hidden = !stage;
         query('.job-error').textContent = job.error || '';
         query('.job-error').hidden = !job.error;
         query('.job-output').textContent = done && job.output ? job.output : '';

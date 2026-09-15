@@ -5,9 +5,19 @@ import test from 'node:test';
 
 const context = vm.createContext({module: {exports: {}}});
 vm.runInContext(fs.readFileSync(new URL('../script.js', import.meta.url), 'utf8'), context);
-const {formatBytes, savingsLabel, validateSettings, advancedDefaults, previewRange, previewSettingsChanged, canReplaceOutput} = context.module.exports;
+const {formatBytes, completionLabel, savingsLabel, validateSettings, advancedDefaults, previewRange, previewSettingsChanged, canReplaceOutput} = context.module.exports;
 
 
+
+test('completed jobs show elapsed minutes and seconds without inventing old timings', () => {
+    assert.equal(completionLabel({elapsed_seconds: 337}), 'Completed in 05:37');
+    assert.equal(completionLabel({elapsed_seconds: 0}), 'Completed in 00:00');
+    assert.equal(completionLabel({elapsed_seconds: 3601}), 'Completed in 60:01');
+    for (const elapsed_seconds of [undefined, null, -1, NaN, Infinity, '337']) {
+        assert.equal(completionLabel({elapsed_seconds}), 'Complete');
+    }
+    assert.equal(completionLabel({elapsed_seconds: 61, preserved_original: true, output: 'a.mp4', source: 'a.mp4'}), 'Original kept in 01:01');
+});
 
 test('formats sizes without misleading zero values', () => {
     assert.equal(formatBytes(0), '0 B');

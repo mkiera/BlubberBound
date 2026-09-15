@@ -10,7 +10,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tempfile::{NamedTempFile, TempDir};
 
@@ -97,7 +97,7 @@ fn text(value: &Value, key: &str) -> String {
     value[key].as_str().unwrap_or_default().to_string()
 }
 fn new_job(source: &Path) -> Value {
-    json!({"id":uuid::Uuid::new_v4().simple().to_string(),"source":source.to_string_lossy(),"name":source.file_name().unwrap_or_default().to_string_lossy(),"kind":"","original_size":0,"status":"probing","percent":0,"stage":"Reading file","error":"","output":"","output_size":0,"duration":0.0,"width":0,"height":0})
+    json!({"id":uuid::Uuid::new_v4().simple().to_string(),"source":source.to_string_lossy(),"name":source.file_name().unwrap_or_default().to_string_lossy(),"kind":"","original_size":0,"status":"probing","percent":0,"stage":"Reading file","error":"","output":"","output_size":0,"duration":0.0,"elapsed_seconds":-1,"width":0,"height":0})
 }
 fn merge(target: &mut Value, source: &Value) {
     if let (Some(target), Some(source)) = (target.as_object_mut(), source.as_object()) {
@@ -191,6 +191,7 @@ impl Controller {
                                     "error",
                                     "status",
                                     "duration",
+                                    "elapsed_seconds",
                                     "width",
                                     "height",
                                 ] {
@@ -499,13 +500,14 @@ impl Controller {
                 self.cancel.store(false, Ordering::SeqCst);
                 merge(
                     &mut s.jobs[index],
-                    &json!({"status":"running","stage":"Preparing","error":"","percent":0}),
+                    &json!({"status":"running","stage":"Preparing","error":"","percent":0,"elapsed_seconds":-1}),
                 );
                 let job = s.jobs[index].clone();
                 let replacement = s.replacements.remove(&text(&job, "id"));
                 self.save(&mut s);
                 (job, s.settings.clone(), replacement)
             };
+            let started = Instant::now();
             let id = text(&job, "id");
             let replacing = replacement.is_some();
             let progress = |percent: f64, stage: &str| {
@@ -580,7 +582,7 @@ impl Controller {
                 match result {
                     Ok(result) => merge(
                         current,
-                        &json!({"status":"completed","stage":result["warning"].as_str().unwrap_or("Completed"),"warning":result["warning"],"preserved_original":result["preserved_original"] == true,"percent":100,"output":result["path"],"output_size":result["size"]}),
+                        &json!({"status":"completed","stage":result["warning"].as_str().unwrap_or("Completed"),"warning":result["warning"],"preserved_original":result["preserved_original"] == true,"percent":100,"output":result["path"],"output_size":result["size"],"elapsed_seconds":started.elapsed().as_secs()}),
                     ),
                     Err(error) => {
                         let cancelled = self.cancel.load(Ordering::SeqCst)
@@ -874,13 +876,16 @@ mod tests {
     fn restores_unknown_fields_and_completed_jobs() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
-        fs::write(&path,r#"{"future":42,"settings":{"target_mb":25,"future_option":9},"jobs":[{"source":"missing.mp4","status":"completed","output":"old.mp4"}]}"#).unwrap();
+        fs::write(&path,r#"{"future":42,"settings":{"target_mb":25,"future_option":9},"jobs":[{"source":"missing.mp4","status":"completed","output":"old.mp4","elapsed_seconds":337},{"source":"legacy.mp4","status":"completed"}]}"#).unwrap();
         let owner = Controller::new(path.clone());
         assert_eq!(owner.snapshot()["jobs"][0]["percent"], 100);
+        assert_eq!(owner.snapshot()["jobs"][0]["elapsed_seconds"], 337);
+        assert_eq!(owner.snapshot()["jobs"][1]["elapsed_seconds"], -1);
         owner.update_settings(json!({"target_mb":10}));
         let saved: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert_eq!(saved["future"], 42);
         assert_eq!(saved["settings"]["future_option"], 9);
+        assert_eq!(saved["jobs"][0]["elapsed_seconds"], 337);
     }
     #[test]
     fn invalid_settings_do_not_replace_previous() {
@@ -1004,6 +1009,7 @@ mod tests {
         wait_for(&owner, |s| s["running"] == false);
         let first = owner.snapshot()["jobs"][0].clone();
         assert_eq!(first["status"], "completed", "{first}");
+        assert!(first["elapsed_seconds"].as_u64().is_some());
         let output = PathBuf::from(text(&first, "output"));
         let previous = fs::read(&output).unwrap();
         let id = text(&first, "id");
@@ -1012,6 +1018,7 @@ mod tests {
         wait_for(&owner, |s| s["running"] == false);
         let second = owner.snapshot()["jobs"][1].clone();
         assert_eq!(second["status"], "completed", "{second}");
+        assert!(second["elapsed_seconds"].as_u64().is_some());
         assert_eq!(PathBuf::from(text(&second, "output")), output);
         assert_eq!(second["preserved_original"], true);
         assert_eq!(fs::read(&output).unwrap(), previous);
@@ -1051,6 +1058,7 @@ mod tests {
         wait_for(&owner, |s| s["running"] == false);
         let third = owner.snapshot()["jobs"][2].clone();
         assert_eq!(third["status"], "completed", "{third}");
+        assert!(third["elapsed_seconds"].as_u64().is_some());
         assert_eq!(third["output"], first["output"]);
         assert_ne!(fs::read(&output).unwrap(), first_data);
         assert_eq!(fs::read(&source).unwrap(), original);
@@ -1058,6 +1066,10 @@ mod tests {
         let restored = Controller::new(state_path);
         assert_eq!(restored.snapshot()["jobs"].as_array().unwrap().len(), 3);
         assert_eq!(restored.snapshot()["settings"]["scale_percent"], 75.0);
+        assert_eq!(
+            restored.snapshot()["jobs"][2]["elapsed_seconds"],
+            third["elapsed_seconds"]
+        );
         restored.close();
     }
     #[test]
