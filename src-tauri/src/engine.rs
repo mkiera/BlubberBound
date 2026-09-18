@@ -893,7 +893,7 @@ fn encode_media(
                 );
             }
             preset_args(&mut args, &codec, &o);
-            if s(&o, "compression_mode") == "auto" {
+            if s(&o, "compression_mode") == "auto" && s(&o, "video_format") == "mkv" {
                 add(
                     &mut args,
                     &[
@@ -1822,6 +1822,11 @@ fn auto_candidate(
     if fs::metadata(output).map_err(|e| e.to_string())?.len() >= original_size {
         return Ok(None);
     }
+    let lossless = s(info, "kind") == "audio" && s(options, "audio_format") == "flac"
+        || s(info, "kind") == "image" && s(options, "image_format") == "webp";
+    if !lossless {
+        return Ok(Some(codec));
+    }
     let original = decoded_hash(
         source,
         s(info, "kind"),
@@ -1829,11 +1834,7 @@ fn auto_candidate(
         cancel,
     )?;
     let encoded = decoded_hash(output, s(info, "kind"), 1, cancel)?;
-    Ok(if original == encoded {
-        Some(codec)
-    } else {
-        None
-    })
+    Ok((original == encoded).then_some(codec))
 }
 pub fn compress(
     source: &Path,
@@ -2200,7 +2201,7 @@ mod tests {
         let result = compress(
             &source,
             &temp.path().join("auto.webp"),
-            &json!({"compression_mode":"auto","target_mb":0.1,"image_quality":5,"max_height":480}),
+            &json!({"compression_mode":"auto","image_format":"webp","target_mb":0.1,"image_quality":5,"max_height":480}),
             &AtomicBool::new(false),
             |_, _| {},
         )
@@ -2238,7 +2239,7 @@ mod tests {
         let result = compress(
             &source,
             &temp.path().join("auto.flac"),
-            &json!({"compression_mode":"auto","target_mb":0.1,"audio_sample_rate":22050}),
+            &json!({"compression_mode":"auto","audio_format":"flac","target_mb":0.1,"audio_sample_rate":22050}),
             &AtomicBool::new(false),
             |_, _| {},
         )
@@ -2259,6 +2260,45 @@ mod tests {
         }
     }
     #[test]
+    fn auto_uses_selected_lossy_audio_and_image_formats() {
+        let temp = tempfile::tempdir().unwrap();
+        let audio = fixture(
+            temp.path(),
+            "source.wav",
+            "sine=frequency=440:sample_rate=48000",
+            &["-t", "2"],
+        );
+        let audio_output = temp.path().join("selected.mp3");
+        let audio_result = compress(
+            &audio,
+            &audio_output,
+            &json!({"compression_mode":"auto","audio_format":"mp3"}),
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        assert_ne!(audio_result["preserved_original"], true);
+        assert_eq!(probe(&audio_output).unwrap()["audio_codec"], "mp3");
+
+        let image = fixture(
+            temp.path(),
+            "source.bmp",
+            "testsrc2=size=512x512:rate=1",
+            &["-frames:v", "1"],
+        );
+        let image_output = temp.path().join("selected.jpg");
+        let image_result = compress(
+            &image,
+            &image_output,
+            &json!({"compression_mode":"auto","image_format":"jpeg"}),
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        assert_ne!(image_result["preserved_original"], true);
+        assert_eq!(probe(&image_output).unwrap()["codec"], "mjpeg");
+    }
+    #[test]
     fn auto_keeps_small_original_instead_of_publishing_a_larger_copy() {
         let temp = tempfile::tempdir().unwrap();
         let source = fixture(
@@ -2271,7 +2311,7 @@ mod tests {
         let result = compress(
             &source,
             &destination,
-            &json!({"compression_mode":"auto"}),
+            &json!({"compression_mode":"auto","audio_format":"flac"}),
             &AtomicBool::new(false),
             |_, _| {},
         )
@@ -2310,7 +2350,7 @@ mod tests {
         let result = compress(
             &source,
             &temp.path().join("with-audio.mkv"),
-            &json!({"compression_mode":"auto"}),
+            &json!({"compression_mode":"auto","video_format":"mkv"}),
             &AtomicBool::new(false),
             |_, _| {},
         )
@@ -2330,6 +2370,43 @@ mod tests {
                 .unwrap()
             );
         }
+    }
+    #[test]
+    fn auto_mp4_converts_incompatible_audio() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = fixture(
+            temp.path(),
+            "source.mkv",
+            "testsrc2=size=160x120:rate=12",
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=44100",
+                "-t",
+                "1",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "flac",
+            ],
+        );
+        let info = probe(&source).unwrap();
+        let options =
+            settings::effective(&json!({"compression_mode":"auto","video_format":"mp4"})).unwrap();
+        let output = temp.path().join("selected.mp4");
+        encode_media(
+            &source,
+            &output,
+            n(&info["size"]),
+            &options,
+            &info,
+            &AtomicBool::new(false),
+            &|_, _| {},
+            None,
+        )
+        .unwrap();
+        assert_eq!(probe(&output).unwrap()["audio_codec"], "aac");
     }
     #[test]
     fn auto_samples_reserve_quality_margin_before_full_encoding() {
@@ -2378,7 +2455,7 @@ mod tests {
         let result = compress(
             &source,
             &temp.path().join("result.mkv"),
-            &json!({"compression_mode":"auto"}),
+            &json!({"compression_mode":"auto","video_format":"mkv"}),
             &AtomicBool::new(false),
             |_, stage| {
                 let stage = stage.split(", ").next().unwrap();
@@ -2517,7 +2594,7 @@ mod tests {
         let result = compress(
             &source,
             &temp.path().join("search-result.mkv"),
-            &json!({"compression_mode":"auto"}),
+            &json!({"compression_mode":"auto","video_format":"mkv"}),
             &AtomicBool::new(false),
             |_, stage| {
                 let stage = stage.split(", ").next().unwrap();
@@ -2582,7 +2659,7 @@ mod tests {
             &source,
             &temp.path().join("output.mkv"),
             &info,
-            &settings::effective(&json!({"compression_mode":"auto"})).unwrap(),
+            &settings::effective(&json!({"compression_mode":"auto","video_format":"mkv"})).unwrap(),
             &AtomicBool::new(false),
             &|_, stage| {
                 let stage = stage.split(", ").next().unwrap();
@@ -2638,7 +2715,7 @@ mod tests {
         let result = compress(
             &source,
             &temp.path().join("auto.mkv"),
-            &json!({"compression_mode":"auto","target_mb":0.1,"scale_percent":50,"fps":6}),
+            &json!({"compression_mode":"auto","video_format":"mkv","target_mb":0.1,"scale_percent":50,"fps":6}),
             &AtomicBool::new(false),
             |_, _| {},
         )

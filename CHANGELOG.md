@@ -4,6 +4,10 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+## 1.1.1 - 2026-09-18
+
+- Keep output formats selectable in Auto quality and use the selected format for saved files.
+
 ## 1.1.0 - 2026-09-15
 
 - Add Auto quality compression for each queued file. It searches for smaller video output that passes frame comparisons, checks image pixels and audio samples exactly, and keeps the original when no smaller output passes.
