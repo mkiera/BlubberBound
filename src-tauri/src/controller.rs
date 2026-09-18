@@ -431,16 +431,7 @@ impl Controller {
         thread::spawn(move || owner.run(only));
     }
     fn destination(source: &Path, kind: &str, options: &Value) -> Result<PathBuf, String> {
-        let mut extension = if text(options, "compression_mode") == "auto" {
-            match kind {
-                "video" => "mkv".into(),
-                "audio" => "flac".into(),
-                "image" => "webp".into(),
-                _ => String::new(),
-            }
-        } else {
-            text(options, &format!("{kind}_format"))
-        };
+        let mut extension = text(options, &format!("{kind}_format"));
         if extension == "jpeg" {
             extension = "jpg".into();
         }
@@ -713,16 +704,7 @@ impl Controller {
                         "The previous output points to the source. Choose another copy.".into(),
                     );
                 }
-                let format = if text(&s.settings, "compression_mode") == "auto" {
-                    match text(&old, "kind").as_str() {
-                        "video" => "mkv".into(),
-                        "audio" => "flac".into(),
-                        "image" => "webp".into(),
-                        _ => String::new(),
-                    }
-                } else {
-                    text(&s.settings, &format!("{}_format", text(&old, "kind")))
-                };
+                let format = text(&s.settings, &format!("{}_format", text(&old, "kind")));
                 let extension = target
                     .extension()
                     .unwrap_or_default()
@@ -926,6 +908,21 @@ mod tests {
                 .file_name()
                 .unwrap(),
             "video_compressed (2).mp4"
+        );
+    }
+    #[test]
+    fn auto_destination_uses_selected_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("video.avi");
+        let mut options = defaults();
+        options["compression_mode"] = json!("auto");
+        options["video_format"] = json!("mp4");
+        assert_eq!(
+            Controller::destination(&source, "video", &options)
+                .unwrap()
+                .extension()
+                .unwrap(),
+            "mp4"
         );
     }
     fn wait_for(owner: &Controller, predicate: impl Fn(&Value) -> bool) {

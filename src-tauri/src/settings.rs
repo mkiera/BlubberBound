@@ -118,19 +118,18 @@ pub fn effective(input: &Value) -> Result<Value, String> {
         output["encoder"] = json!("software");
     }
     if output["compression_mode"] == "auto" {
-        output["video_format"] = json!("mkv");
-        output["audio_format"] = json!("flac");
-        output["image_format"] = json!("webp");
         output["advanced_enabled"] = json!(true);
         output["rate_control"] = json!("quality");
         output["encoder"] = json!("software");
+        output["audio_bitrate_kbps"] = json!(320);
         output["max_height"] = json!(0);
         output["scale_percent"] = json!(100);
         output["output_width"] = json!(0);
         output["output_height"] = json!(0);
         output["fps"] = json!(0);
         output["mute_audio"] = json!(false);
-        output["image_lossless"] = json!(true);
+        output["image_quality"] = json!(100);
+        output["image_lossless"] = json!(output["image_format"] == "webp");
         output["strip_metadata"] = json!(false);
     }
     Ok(output)
@@ -167,14 +166,19 @@ mod tests {
     }
     #[test]
     fn auto_mode_ignores_size_and_visual_degradation_controls() {
-        let options = effective(&json!({"compression_mode":"auto","target_mb":1,"advanced_enabled":true,"rate_control":"bitrate","video_bitrate_kbps":100,"scale_percent":50,"max_height":480,"fps":15,"encoder":"auto","mute_audio":true,"image_lossless":false})).unwrap();
+        let options = effective(&json!({"compression_mode":"auto","target_mb":1,"video_format":"mp4","audio_format":"opus","image_format":"jpeg","advanced_enabled":true,"rate_control":"bitrate","video_bitrate_kbps":100,"scale_percent":50,"max_height":480,"fps":15,"encoder":"auto","mute_audio":true,"image_lossless":false})).unwrap();
         assert_eq!(options["compression_mode"], "auto");
+        assert_eq!(options["video_format"], "mp4");
+        assert_eq!(options["audio_format"], "opus");
+        assert_eq!(options["image_format"], "jpeg");
         assert_eq!(options["rate_control"], "quality");
         assert_eq!(options["scale_percent"], 100);
         assert_eq!(options["max_height"], 0);
         assert_eq!(options["fps"], 0);
         assert_eq!(options["encoder"], "software");
         assert_eq!(options["mute_audio"], false);
-        assert_eq!(options["image_lossless"], true);
+        assert_eq!(options["audio_bitrate_kbps"], 320);
+        assert_eq!(options["image_quality"], 100);
+        assert_eq!(options["image_lossless"], false);
     }
 }

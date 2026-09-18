@@ -71,7 +71,7 @@ function previewSettingsChanged(previous, current) {
 
 function canReplaceOutput(job, settings) {
     if (!job?.output || job.preserved_original || job.output === job.source) return false;
-    const format = settings?.compression_mode === 'auto' ? ({video: 'mkv', audio: 'flac', image: 'webp'})[job?.kind] : settings?.[`${job?.kind}_format`];
+    const format = settings?.[`${job?.kind}_format`];
     const extension = format === 'jpeg' ? 'jpg' : format;
     return Boolean(job?.output && extension && job.output.toLowerCase().endsWith(`.${extension}`));
 }
@@ -216,13 +216,11 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
             if (label) label.classList.toggle('inactive-controls', input.disabled);
         });
         $('target-help').textContent = auto ? 'Auto quality uses a separate target for each file. The size limit is ignored.' : sizeMode ? 'Smaller limits trade detail for size. If the limit cannot be met, the smallest output produced is saved with a warning.' : 'Advanced mode controls quality or bitrate. Output size is not limited.';
-        $('basic-formats').hidden = auto;
-        $('auto-formats-info').hidden = !auto;
         $('encoder').hidden = auto;
         $('encoder-label').hidden = auto;
         $('auto-encoder-label').hidden = !auto;
         $('auto-encoder-info').hidden = !auto;
-        for (const id of ['video-format', 'audio-format', 'image-format', 'max-height', 'encoder', 'open-advanced']) $(id).disabled = auto;
+        for (const id of ['max-height', 'encoder', 'open-advanced']) $(id).disabled = auto;
         const customScale = enabled && (Number($('scale-percent').value) !== 100 || Number($('output-width').value) > 0 || Number($('output-height').value) > 0);
         $('custom-resolution').hidden = !customScale;
         if (customScale && $('max-height').value === '0') $('max-height').value = 'custom';
