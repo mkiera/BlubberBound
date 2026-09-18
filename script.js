@@ -216,7 +216,6 @@ if (typeof document !== 'undefined' && document.getElementById('jobs')) {
             if (label) label.classList.toggle('inactive-controls', input.disabled);
         });
         $('target-help').textContent = auto ? 'Auto quality uses a separate target for each file. The size limit is ignored.' : sizeMode ? 'Smaller limits trade detail for size. If the limit cannot be met, the smallest output produced is saved with a warning.' : 'Advanced mode controls quality or bitrate. Output size is not limited.';
-        $('auto-formats-info').hidden = !auto;
         $('encoder').hidden = auto;
         $('encoder-label').hidden = auto;
         $('auto-encoder-label').hidden = !auto;

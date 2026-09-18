@@ -57,7 +57,7 @@ test('rejects invalid size limits before calling the desktop bridge', () => {
     assert.equal(validateSettings({target_mb: '25'}).target_mb, 25);
 });
 
-test('auto quality keeps output formats selectable and ranks its suggestions', () => {
+test('auto quality keeps the same selectable output formats as size-limit mode', () => {
     const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     assert.match(html, /name="compression_mode"[^>]*>[^<]*<option value="limit"[^>]*>[^<]*<\/option><option value="auto"/);
     assert.equal(validateSettings({target_mb: 25, compression_mode: 'auto'}).compression_mode, 'auto');
@@ -68,7 +68,7 @@ test('auto quality keeps output formats selectable and ranks its suggestions', (
     assert.doesNotMatch(source, /\$\('basic-formats'\)\.hidden = auto/);
     assert.doesNotMatch(source, /\['video-format', 'audio-format', 'image-format'[^\]]*\][^\n]*disabled = auto/);
     assert.match(source, /\$\('encoder'\)\.hidden = auto/);
-    assert.match(html, /id="auto-formats-info"[^>]*>Auto suggestions: Video 1\. MKV, 2\. MP4, 3\. MOV, 4\. WebM\. Audio 1\. FLAC, 2\. Opus, 3\. M4A, 4\. MP3, 5\. Ogg, 6\. AAC\. Images 1\. WebP, 2\. JPEG\./);
+    assert.doesNotMatch(html, /auto-formats-info|Auto suggestions/);
 });
 
 test('compression mode keeps the Advanced label fixed and has no mode description', () => {

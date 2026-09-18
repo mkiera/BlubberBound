@@ -4,7 +4,7 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
-- Keep output formats selectable in Auto quality, show ranked format suggestions, and use the selected format for saved files.
+- Keep output formats selectable in Auto quality and use the selected format for saved files.
 
 ## 1.1.0 - 2026-09-15
 
