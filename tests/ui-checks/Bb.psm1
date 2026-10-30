@@ -104,16 +104,23 @@ function Find-BbElement {
         default { New-Object System.Windows.Automation.AndCondition($conds) }
     }
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $last = ''
     do {
         try {
             $scope = Get-BbWindow -Title $Window -TimeoutSeconds 1
-            foreach ($e in $scope.FindAll($Descendants, $cond)) {
-                if (-not $Like -or $e.Current.Name -like $Like) { return $e }
+            if (-not $Like) {
+                $e = $scope.FindFirst($Descendants, $cond)
+                if ($e) { return $e }
+            } else {
+                foreach ($e in $scope.FindAll($Descendants, $cond)) {
+                    # The queue list redraws while it is polled, so an element can vanish mid-search.
+                    try { if ($e.Current.Name -like $Like) { return $e } } catch { $last = "$_" }
+                }
             }
-        } catch { }
+        } catch { $last = "$_" }
         Start-Sleep -Milliseconds 250
     } while ((Get-Date) -lt $deadline)
-    throw "no element name='$Name' like='$Like' type='$ControlType' in '$Window'"
+    throw "no element name='$Name' like='$Like' type='$ControlType' in '$Window' (last error: $last)"
 }
 
 function Test-BbElement {

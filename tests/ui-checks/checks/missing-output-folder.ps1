@@ -9,7 +9,7 @@ Start-Bb -Files $clips | Out-Null
 Wait-BbJob -Status pending -Count 2 -TimeoutSeconds 60 | Out-Null
 $buttons = (Get-BbWindow).FindAll([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)))
 Write-Host "buttons: $(($buttons | ForEach-Object { "'$($_.Current.Name)'" }) -join ' ')"
-Find-BbElement -Like '50*MB*' -ControlType Button | Invoke-BbElement
+Find-BbElement -Name '50 MB' -ControlType Button | Invoke-BbElement
 Start-Sleep -Seconds 2
 Assert-Bb ((Get-BbSettings).target_mb -eq 50) 'size limit change saved while the output folder is missing'
 Assert-Bb (-not (Test-BbElement -Like '*output folder is unavailable*')) 'no unavailable-folder error after the size change'
