@@ -4,6 +4,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+- Fix in-app update downloads that stopped after two minutes on slower connections. A download now fails only when it stalls for two minutes or runs longer than one hour.
+
 ## 1.1.1 - 2026-09-18
 
 - Keep output formats selectable in Auto quality and use the selected format for saved files.

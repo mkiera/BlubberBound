@@ -1,4 +1,4 @@
-use reqwest::blocking::{Client, Response};
+use reqwest::blocking::{Client, RequestBuilder, Response};
 use semver::{BuildMetadata, Version};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 const MAX_INSTALLER: u64 = 300 * 1024 * 1024;
 const MAX_ARCHIVE: u64 = 350 * 1024 * 1024;
+const DOWNLOAD_LIMIT: Duration = Duration::from_secs(3600);
 
 fn text(value: &Value) -> &str {
     value.as_str().unwrap_or("")
@@ -344,6 +345,27 @@ impl Source {
             token: None,
         }
     }
+    fn get(&self, url: &reqwest::Url, binary: bool) -> RequestBuilder {
+        let mut request = self.client.get(url.clone());
+        // A request timeout caps the whole body. Binary reads keep the client timeout, which applies to each read.
+        if !binary {
+            request = request.timeout(Duration::from_secs(30));
+        }
+        request
+            .header(
+                "User-Agent",
+                format!("{}/{}", text(&self.profile["display_name"]), self.version),
+            )
+            .header(
+                "Accept",
+                if binary {
+                    "application/octet-stream"
+                } else {
+                    "application/vnd.github+json"
+                },
+            )
+            .header("X-GitHub-Api-Version", "2022-11-28")
+    }
     fn request(
         &mut self,
         url: &str,
@@ -366,23 +388,7 @@ impl Source {
             return Err("This repository is private. Sign in with GitHub CLI or set BLUBBERBOUND_GITHUB_TOKEN to an account with repository access.".into());
         }
         for _ in 0..8 {
-            let mut request = self
-                .client
-                .get(url.clone())
-                .timeout(Duration::from_secs(if binary { 120 } else { 30 }))
-                .header(
-                    "User-Agent",
-                    format!("{}/{}", text(&self.profile["display_name"]), self.version),
-                )
-                .header(
-                    "Accept",
-                    if binary {
-                        "application/octet-stream"
-                    } else {
-                        "application/vnd.github+json"
-                    },
-                )
-                .header("X-GitHub-Api-Version", "2022-11-28");
+            let mut request = self.get(&url, binary);
             if auth {
                 request = request.bearer_auth(self.token.as_ref().unwrap());
             }
@@ -633,7 +639,7 @@ fn copy_download(
             if cancel.load(Ordering::Relaxed) {
                 return Err("Update download cancelled.".into());
             }
-            if started.elapsed() > Duration::from_secs(600) {
+            if started.elapsed() > DOWNLOAD_LIMIT {
                 return Err("Update download timed out. Try again.".into());
             }
             let n = source
@@ -1340,6 +1346,60 @@ mod tests {
                 "{location}"
             );
         }
+    }
+    #[test]
+    fn binary_downloads_have_no_total_deadline() {
+        let source = Source::new(profile(), "1.0.0".into());
+        let url = reqwest::Url::parse("https://github.com/file").unwrap();
+        let binary = source.get(&url, true).build().unwrap();
+        assert_eq!(binary.timeout(), None);
+        let listing = source.get(&url, false).build().unwrap();
+        assert_eq!(listing.timeout(), Some(&Duration::from_secs(30)));
+        assert!(DOWNLOAD_LIMIT >= Duration::from_secs(1800));
+    }
+    #[test]
+    fn slow_binary_download_outlasts_client_timeout() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK
+Content-Length: 6
+Connection: close
+
+",
+                )
+                .unwrap();
+            for byte in b"MZtest" {
+                thread::sleep(Duration::from_millis(400));
+                stream.write_all(&[*byte]).unwrap();
+            }
+        });
+        let mut source = Source::new(profile(), "1.0.0".into());
+        source.client = Client::builder()
+            .timeout(Duration::from_secs(1))
+            .build()
+            .unwrap();
+        let url = reqwest::Url::parse(&format!("http://{address}/file")).unwrap();
+        let response = source.get(&url, true).send().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("download.part");
+        copy_download(
+            response,
+            &path,
+            Some(6),
+            100,
+            &AtomicBool::new(false),
+            &|_| {},
+        )
+        .unwrap();
+        assert_eq!(fs::read(path).unwrap(), b"MZtest");
+        server.join().unwrap();
     }
     #[test]
     fn stream_download_requires_exact_nonempty_size_and_removes_partial() {
