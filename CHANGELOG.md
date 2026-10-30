@@ -5,6 +5,7 @@ Release headings use the complete version without a leading `v`. Tagged sections
 ## Unreleased
 
 - Keep the file that was compressing queued when you close the app during a compression, so it restarts next time instead of showing as Cancelled.
+- Open the running window when you start BlubberBound again, and add any files you opened with it to that queue, instead of starting a second copy that overwrites the queue and settings.
 
 ## 1.1.1 - 2026-09-18
 
