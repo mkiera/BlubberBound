@@ -4,6 +4,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+- Keep the file that was compressing queued when you close the app during a compression, so it restarts next time instead of showing as Cancelled.
+
 ## 1.1.1 - 2026-09-18
 
 - Keep output formats selectable in Auto quality and use the selected format for saved files.
