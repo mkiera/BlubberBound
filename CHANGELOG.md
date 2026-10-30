@@ -9,6 +9,9 @@ Release headings use the complete version without a leading `v`. Tagged sections
 - Fix in-app update downloads that stopped after two minutes on slower connections. A download now fails only when it stalls for two minutes or runs longer than one hour.
 - Keep the file that was compressing queued when you close the app during a compression, so it restarts next time instead of showing as Cancelled.
 - Open the running window when you start BlubberBound again, and add any files you opened with it to that queue, instead of starting a second copy that overwrites the queue and settings.
+- Remove temporary folders left in media folders after a crash or forced close. Only the app's own folders older than an hour are removed at startup.
+- Allow settings changes when the saved output folder is missing, and refuse to start the queue once with a clear message instead of failing each file.
+- Fix Auto quality failing for videos saved to a folder whose path contains an apostrophe, comma, semicolon or square bracket.
 
 ## 1.1.1 - 2026-09-18
 

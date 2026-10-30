@@ -131,6 +131,63 @@ fn checked_settings(value: &Value) -> Result<Value, String> {
     Ok(checked)
 }
 
+const STALE_TEMP_AGE: Duration = Duration::from_secs(3600);
+
+fn temp_name(name: &str, prefix: &str) -> bool {
+    name.strip_prefix(prefix)
+        .is_some_and(|rest| rest.len() == 6 && rest.bytes().all(|b| b.is_ascii_alphanumeric()))
+}
+fn real_dir(path: &Path) -> Option<fs::Metadata> {
+    fs::symlink_metadata(path)
+        .ok()
+        .filter(|meta| meta.is_dir() && !meta.file_type().is_symlink())
+}
+fn app_temp_folder(path: &Path, replace: bool) -> Option<std::time::SystemTime> {
+    let mut newest = real_dir(path)?.modified().ok()?;
+    let mut staged = 0;
+    for entry in fs::read_dir(path).ok()? {
+        let entry = entry.ok()?;
+        let name = entry.file_name().into_string().ok()?;
+        let meta = fs::symlink_metadata(entry.path()).ok()?;
+        let modified = if meta.is_file() && (replace || name.starts_with("output.")) {
+            staged += usize::from(replace);
+            meta.modified().ok()?
+        } else if replace && temp_name(&name, ".blubberbound-") {
+            app_temp_folder(&entry.path(), false)?
+        } else {
+            return None;
+        };
+        newest = newest.max(modified);
+    }
+    (staged <= 1).then_some(newest)
+}
+// A .compress-replace folder only ever holds the new output before it is moved over the old one.
+fn remove_stale_temp_folders(folders: Vec<PathBuf>, age: Duration) {
+    let mut seen = vec![];
+    for folder in folders {
+        if folder.as_os_str().is_empty() || real_dir(&folder).is_none() || seen.contains(&folder) {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let replace = temp_name(&name, ".compress-replace-");
+            if !replace && !temp_name(&name, ".blubberbound-") {
+                continue;
+            }
+            let stale = app_temp_folder(&entry.path(), replace)
+                .and_then(|newest| newest.elapsed().ok())
+                .is_some_and(|elapsed| elapsed >= age);
+            if stale {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+        seen.push(folder);
+    }
+}
+
 impl Controller {
     pub fn new(path: PathBuf) -> Arc<Self> {
         let mut inner = Inner {
@@ -228,6 +285,19 @@ impl Controller {
             cancel: AtomicBool::new(false),
             preview_cancel: AtomicBool::new(false),
         });
+        let folders = {
+            let s = controller.inner.lock().unwrap();
+            let mut folders = vec![PathBuf::from(text(&s.settings, "output_dir"))];
+            for job in &s.jobs {
+                for key in ["source", "output"] {
+                    if let Some(parent) = Path::new(&text(job, key)).parent() {
+                        folders.push(parent.to_path_buf());
+                    }
+                }
+            }
+            folders
+        };
+        thread::spawn(move || remove_stale_temp_folders(folders, STALE_TEMP_AGE));
         let owner = controller.clone();
         thread::spawn(move || {
             let jobs = owner.inner.lock().unwrap().jobs.clone();
@@ -394,7 +464,10 @@ impl Controller {
         match checked_settings(&candidate) {
             Ok(checked) => {
                 let folder = text(&checked, "output_dir");
-                if !folder.is_empty() && !Path::new(&folder).is_dir() {
+                if folder != text(&s.settings, "output_dir")
+                    && !folder.is_empty()
+                    && !Path::new(&folder).is_dir()
+                {
                     s.error = "The output folder is unavailable. Choose another folder.".into();
                     return;
                 }
@@ -420,6 +493,18 @@ impl Controller {
                     && only.as_ref().map_or(true, |id| j["id"] == *id)
             }) {
                 s.error = "Add files or retry a failed item first.".into();
+                return;
+            }
+            let folder = text(&s.settings, "output_dir");
+            if !folder.is_empty()
+                && !Path::new(&folder).is_dir()
+                && s.jobs.iter().any(|j| {
+                    matches!(j["status"].as_str(), Some("pending" | "probing"))
+                        && only.as_ref().map_or(true, |id| j["id"] == *id)
+                        && !s.replacements.contains_key(&text(j, "id"))
+                })
+            {
+                s.error = "The output folder is unavailable. Choose another folder or use each file’s original folder.".into();
                 return;
             }
             s.running = true;
@@ -881,6 +966,144 @@ mod tests {
         owner.update_settings(json!({"target_mb":-1}));
         assert_eq!(owner.snapshot()["settings"]["target_mb"], 10);
         assert!(!text(&owner.snapshot(), "error").is_empty());
+    }
+    #[test]
+    fn missing_saved_output_folder_allows_settings_and_refuses_start_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let missing = dir.path().join("unplugged");
+        let jobs: Vec<Value> = ["a.mp4", "b.mp4"]
+            .iter()
+            .map(|name| json!({"source":dir.path().join(name),"status":"pending","kind":"video"}))
+            .collect();
+        fs::write(
+            &path,
+            json!({"settings":{"output_dir":missing},"jobs":jobs}).to_string(),
+        )
+        .unwrap();
+        let owner = Controller::new(path);
+        owner.update_settings(json!({"target_mb":25}));
+        let state = owner.snapshot();
+        assert_eq!(state["settings"]["target_mb"], 25.0, "{state}");
+        assert_eq!(state["error"], "");
+        owner.update_settings(json!({"output_dir":dir.path().join("also-missing")}));
+        assert!(text(&owner.snapshot(), "error").contains("output folder"));
+        assert_eq!(owner.snapshot()["settings"]["output_dir"], json!(missing));
+        owner.start_queue(None);
+        let state = owner.snapshot();
+        assert_eq!(state["running"], false);
+        assert!(text(&state, "error").contains("output folder"), "{state}");
+        assert!(state["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|job| job["status"] == "pending"));
+        owner.close();
+    }
+    fn age(path: &Path) {
+        let old = std::time::SystemTime::now() - Duration::from_secs(7200);
+        let mut options = fs::OpenOptions::new();
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.access_mode(0x100).custom_flags(0x02000000);
+        }
+        #[cfg(not(windows))]
+        options.read(true);
+        if path.is_dir() {
+            for entry in fs::read_dir(path).unwrap() {
+                age(&entry.unwrap().path());
+            }
+        }
+        options.open(path).unwrap().set_modified(old).unwrap();
+    }
+    fn temp_folder(parent: &Path, name: &str, files: &[&str]) -> PathBuf {
+        let path = parent.join(name);
+        fs::create_dir_all(&path).unwrap();
+        for file in files {
+            let file = path.join(file);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, b"partial").unwrap();
+        }
+        path
+    }
+    #[test]
+    fn startup_removes_only_stale_app_temp_folders_in_known_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sources, outputs, chosen, other) = (
+            dir.path().join("sources"),
+            dir.path().join("outputs"),
+            dir.path().join("chosen"),
+            dir.path().join("other"),
+        );
+        for folder in [&sources, &outputs, &chosen, &other] {
+            fs::create_dir(folder).unwrap();
+        }
+        let encode = temp_folder(
+            &sources,
+            ".blubberbound-a1B2c3",
+            &["output.mp4", "output.best"],
+        );
+        let replace = temp_folder(
+            &outputs,
+            ".compress-replace-Zz9Yy8",
+            &["clip_compressed.mp4"],
+        );
+        temp_folder(
+            &replace,
+            ".blubberbound-Qq1Ww2",
+            &["output.mp4", "output.ssim-stats"],
+        );
+        let chosen_encode = temp_folder(&chosen, ".blubberbound-x7x7x7", &[]);
+        let keep = [
+            temp_folder(&other, ".blubberbound-o0o0o0", &["output.mp4"]),
+            temp_folder(&sources, ".blubberbound-long123", &["output.mp4"]),
+            temp_folder(&sources, ".blubberbound-b1b1b1", &["holiday.mp4"]),
+            temp_folder(
+                &sources,
+                ".blubberbound-c1c1c1",
+                &["output.mp4", "nested/output.mp4"],
+            ),
+            temp_folder(
+                &outputs,
+                ".compress-replace-d1d1d1",
+                &["one.mp4", "two.mp4"],
+            ),
+            temp_folder(&outputs, ".compress-backup-e1e1e1", &["output.mp4"]),
+        ];
+        fs::write(sources.join(".blubberbound-f1f1f1"), b"user file").unwrap();
+        for path in [&encode, &replace, &chosen_encode].into_iter().chain(&keep) {
+            age(path);
+        }
+        let fresh = temp_folder(&sources, ".blubberbound-g1g1g1", &["output.mp4"]);
+        let path = dir.path().join("state.json");
+        fs::write(
+            &path,
+            json!({"settings":{"output_dir":chosen},"jobs":[
+                {"source":sources.join("clip.mp4"),"status":"completed","output":outputs.join("clip_compressed.mp4")},
+                {"source":"relative.mp4","status":"pending"}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        let owner = Controller::new(path);
+        let until = Instant::now() + Duration::from_secs(10);
+        while [&encode, &replace, &chosen_encode]
+            .iter()
+            .any(|p| p.exists())
+        {
+            assert!(
+                Instant::now() < until,
+                "Stale temp folders were not removed"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+        thread::sleep(Duration::from_millis(100));
+        for path in keep.iter().chain([&fresh]) {
+            assert!(path.exists(), "{path:?} was removed");
+        }
+        assert!(sources.join(".blubberbound-f1f1f1").is_file());
+        owner.close();
     }
     #[test]
     fn installer_reservation_blocks_processing() {
