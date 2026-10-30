@@ -33,7 +33,11 @@ function Initialize-BbProfile {
     param([hashtable]$Settings = @{})
     if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Initialize-BbProfile wipes the app data folder. It runs only on CI.' }
     $appData = Join-Path $env:LOCALAPPDATA 'BlubberBound'
-    if (Test-Path $appData) { Remove-Item -Recurse -Force $appData }
+    # WebView2 helpers of an app that was just stopped can hold the folder for a few seconds.
+    for ($try = 0; (Test-Path $appData) -and $try -lt 30; $try++) {
+        try { Remove-Item -Recurse -Force $appData -ErrorAction Stop } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (Test-Path $appData) { throw "could not clear $appData" }
     New-Item -ItemType Directory -Force -Path $appData | Out-Null
     $root = Join-Path ([IO.Path]::GetTempPath()) "bb-ui-data-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
     New-Item -ItemType Directory -Force -Path (Join-Path $root 'media') | Out-Null
@@ -42,8 +46,9 @@ function Initialize-BbProfile {
 }
 
 function New-BbClip {
-    param([Parameter(Mandatory)][string]$Path, [int]$Seconds = 4, [string]$Size = '640x360')
-    & $env:BLUBBERBOUND_FFMPEG -v error -y -f lavfi -i "testsrc2=size=$($Size):rate=30" -f lavfi -i "sine=frequency=440" -t $Seconds -pix_fmt yuv420p -c:v libx264 -c:a aac $Path
+    param([Parameter(Mandatory)][string]$Path, [int]$Seconds = 4, [string]$Size = '640x360', [string]$Bitrate = '')
+    $rate = if ($Bitrate) { @('-b:v', $Bitrate) } else { @() }
+    & $env:BLUBBERBOUND_FFMPEG -v error -y -f lavfi -i "testsrc2=size=$($Size):rate=30" -f lavfi -i "sine=frequency=440" -t $Seconds -pix_fmt yuv420p -c:v libx264 @rate -c:a aac $Path
     if ($LASTEXITCODE -ne 0) { throw "ffmpeg could not make $Path" }
     return $Path
 }
@@ -67,6 +72,7 @@ function Stop-Bb {
     Get-Process blubberbound -ErrorAction SilentlyContinue | ForEach-Object {
         if (-not $_.WaitForExit(0)) { $_.Kill(); $_.WaitForExit($TimeoutSeconds * 1000) | Out-Null }
     }
+    Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
 function Get-BbWindow {

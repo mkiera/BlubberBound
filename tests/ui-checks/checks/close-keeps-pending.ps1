@@ -14,7 +14,10 @@ Save-BbScreenshot -Name 'compressing' | Out-Null
 (Get-Process blubberbound | Where-Object MainWindowTitle -eq 'BlubberBound' | Select-Object -First 1).CloseMainWindow() | Out-Null
 $prompt = Get-BbWindow -Title 'Stop compression?' -TimeoutSeconds 15
 Save-BbDesktopScreenshot -Name 'close-prompt' | Out-Null
-$ok = $prompt.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, 'OK')))
+$ae = [System.Windows.Automation.AutomationElement]
+$ok = $prompt.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition(
+    (New-Object System.Windows.Automation.PropertyCondition($ae::NameProperty, 'OK')),
+    (New-Object System.Windows.Automation.PropertyCondition($ae::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)))))
 Assert-Bb ($null -ne $ok) 'close prompt has an OK button'
 $ok | Invoke-BbElement
 Assert-Bb ($proc.WaitForExit(30000)) 'app exited after confirming the close prompt'
