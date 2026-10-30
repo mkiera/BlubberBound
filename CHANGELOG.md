@@ -4,6 +4,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+- Fix Auto quality failing for videos saved to a folder whose path contains an apostrophe, comma, semicolon or square bracket.
+
 ## 1.1.1 - 2026-09-18
 
 - Keep output formats selectable in Auto quality and use the selected format for saved files.

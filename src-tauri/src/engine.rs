@@ -1422,6 +1422,20 @@ fn source_frame_count(info: &Value, source: &Path, cancel: &AtomicBool) -> Resul
         counted_frames(source, cancel)
     }
 }
+fn escape_chars(value: &str, special: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        if special.contains(c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+// The graph parser unescapes a filter option value first, then the option parser does.
+fn filter_value(value: &str) -> String {
+    escape_chars(&escape_chars(value, "\\':"), "\\'[],;")
+}
 fn visual_score(
     source: &Path,
     output: &Path,
@@ -1435,7 +1449,7 @@ fn visual_score(
     let stats = output.with_extension("ssim-stats");
     let (w, h) = (n(&info["width"]) as u32, n(&info["height"]) as u32);
     let fps = n(&info["fps"]).max(1.0);
-    let filter = format!("[0:v]settb=AVTB,setpts=N/({fps}*TB),scale={w}:{h},setsar=1,format=yuv444p16le[ref];[1:v]settb=AVTB,setpts=N/({fps}*TB),format=yuv444p16le[encoded];[encoded][ref]ssim=eof_action=pass:repeatlast=0:stats_file={}[comparison]", stats.to_string_lossy().replace('\\', "/").replace(':', "\\\\\\:"));
+    let filter = format!("[0:v]settb=AVTB,setpts=N/({fps}*TB),scale={w}:{h},setsar=1,format=yuv444p16le[ref];[1:v]settb=AVTB,setpts=N/({fps}*TB),format=yuv444p16le[encoded];[encoded][ref]ssim=eof_action=pass:repeatlast=0:stats_file={}[comparison]", filter_value(&stats.to_string_lossy()));
     let mut args = vec![];
     add(&mut args, &["-hide_banner", "-v", "error", "-nostdin"]);
     if let Some((start, duration)) = sample {
@@ -2570,6 +2584,38 @@ mod tests {
             None,
         )
         .unwrap();
+    }
+    #[test]
+    fn visual_score_accepts_filtergraph_characters_in_the_output_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("O'Brien, Ltd [4K]; x");
+        fs::create_dir(&folder).unwrap();
+        for root in [folder.clone(), folder.canonicalize().unwrap()] {
+            let source = fixture(
+                &root,
+                "source.mp4",
+                "testsrc2=size=64x48:rate=10",
+                &["-t", "1", "-c:v", "libx264"],
+            );
+            let output = root.join("output.mp4");
+            fs::copy(&source, &output).unwrap();
+            let (mean, _) = visual_score(
+                &source,
+                &output,
+                &probe(&source).unwrap(),
+                &AtomicBool::new(false),
+                &|_, _| {},
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(mean > 0.99, "{root:?}: {mean}");
+            fs::remove_file(&source).unwrap();
+        }
+    }
+    #[test]
+    fn filter_value_escapes_both_filtergraph_levels() {
+        assert_eq!(filter_value(r"C:\a'b,c[d];e"), r"C\\:\\\\a\\\'b\,c\[d\]\;e");
     }
     #[test]
     fn auto_video_search_avoids_repeated_full_file_encodes() {
