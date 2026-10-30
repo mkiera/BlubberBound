@@ -278,23 +278,58 @@ async fn desktop_command(
         .map_err(|e| e.to_string())?
 }
 
-fn main() {
-    let profile: Value =
-        serde_json::from_str(include_str!("../../app_profile.json")).expect("Invalid app profile");
-    let version = option_env!("BLUBBERBOUND_BUILD_VERSION")
-        .unwrap_or(include_str!("../../version.txt").trim())
-        .to_string();
-    let mut args = std::env::args().skip(1);
+fn launch_args(
+    args: impl IntoIterator<Item = String>,
+    cwd: &Path,
+) -> (Vec<String>, Option<PathBuf>) {
+    let mut args = args.into_iter();
     let mut files = vec![];
     let mut state_override = None;
     while let Some(value) = args.next() {
         if value == "--state-dir" {
             state_override = args.next().map(PathBuf::from);
         } else if value != "--debug" {
-            files.push(value);
+            if value.is_empty() || Path::new(&value).is_absolute() {
+                files.push(value);
+            } else {
+                files.push(cwd.join(value).to_string_lossy().into_owned());
+            }
         }
     }
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_opener::init())
+    (files, state_override)
+}
+
+fn main() {
+    let profile: Value =
+        serde_json::from_str(include_str!("../../app_profile.json")).expect("Invalid app profile");
+    let version = option_env!("BLUBBERBOUND_BUILD_VERSION")
+        .unwrap_or(include_str!("../../version.txt").trim())
+        .to_string();
+    let (files, state_override) = launch_args(
+        std::env::args().skip(1),
+        &std::env::current_dir().unwrap_or_default(),
+    );
+    let mut builder = tauri::Builder::default();
+    // A --state-dir copy keeps its own queue, so it may run beside the normal copy.
+    if state_override.is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let (files, _) = launch_args(argv.into_iter().skip(1), Path::new(&cwd));
+            if !files.is_empty() {
+                let handle = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Some(state) = handle.try_state::<Desktop>() {
+                        state.queue.add_paths(files);
+                    }
+                });
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+    builder.plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![desktop_command])
         .setup(move|app|{
             let directory=if let Some(directory)=state_override {directory} else {
@@ -325,4 +360,32 @@ fn main() {
                 }else if window.label()=="notes"{let state=window.state::<Desktop>();let _=state.updater.action("dismiss_whats_new",json!([]),state.queue.busy());}
             }
         }).run(tauri::generate_context!()).expect("Desktop application failed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn launch_args_resolve_relative_files_against_launch_folder() {
+        let cwd = std::env::temp_dir().join("launch");
+        let absolute = std::env::temp_dir().join("clip.mp4");
+        let (files, state) = launch_args(
+            [
+                "--debug".to_string(),
+                "clip.mp4".to_string(),
+                absolute.to_string_lossy().into_owned(),
+                "--state-dir".to_string(),
+                "state".to_string(),
+            ],
+            &cwd,
+        );
+        assert_eq!(
+            files,
+            vec![
+                cwd.join("clip.mp4").to_string_lossy().into_owned(),
+                absolute.to_string_lossy().into_owned()
+            ]
+        );
+        assert_eq!(state, Some(PathBuf::from("state")));
+    }
 }

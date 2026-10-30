@@ -7,6 +7,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 - Remove downloaded update installers, unfinished downloads and old update logs when the app starts, and finish removing an unfinished download when the app closes during it.
 - Fix updates that stopped with "The application files are still in use" while FlipperClipper or a player opened from the app was still running.
 - Fix in-app update downloads that stopped after two minutes on slower connections. A download now fails only when it stalls for two minutes or runs longer than one hour.
+- Keep the file that was compressing queued when you close the app during a compression, so it restarts next time instead of showing as Cancelled.
+- Open the running window when you start BlubberBound again, and add any files you opened with it to that queue, instead of starting a second copy that overwrites the queue and settings.
 
 ## 1.1.1 - 2026-09-18
 

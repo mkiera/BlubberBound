@@ -569,11 +569,16 @@ impl Controller {
                     }
                 }
             }
+            let closed = s.closed;
             if let Some(current) = s.jobs.iter_mut().find(|j| j["id"] == id) {
                 match result {
                     Ok(result) => merge(
                         current,
                         &json!({"status":"completed","stage":result["warning"].as_str().unwrap_or("Completed"),"warning":result["warning"],"preserved_original":result["preserved_original"] == true,"percent":100,"output":result["path"],"output_size":result["size"],"elapsed_seconds":started.elapsed().as_secs()}),
+                    ),
+                    Err(_) if closed => merge(
+                        current,
+                        &json!({"status":"pending","stage":"Ready to retry after restart","percent":0,"error":""}),
                     ),
                     Err(error) => {
                         let cancelled = self.cancel.load(Ordering::SeqCst)
@@ -1170,5 +1175,54 @@ mod tests {
         assert_eq!(owner.snapshot()["jobs"][1]["status"], "cancelled");
         assert_eq!(fs::read(output).unwrap(), bytes);
         owner.close();
+    }
+
+    #[test]
+    fn closing_during_compression_keeps_running_file_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(source) = fixture(dir.path()) else {
+            return;
+        };
+        let state_path = dir.path().join("state.json");
+        let owner = Controller::new(state_path.clone());
+        owner.add_paths(vec![source.to_string_lossy().into_owned()]);
+        wait_for(&owner, |s| s["jobs"][0]["status"] == "pending");
+        owner.update_settings(json!({"advanced_enabled":true,"preset":"veryslow","encoder":"software","scale_percent":200}));
+        owner.start_queue(None);
+        wait_for(&owner, |s| s["jobs"][0]["status"] == "running");
+        owner.close();
+        assert!(!owner.busy());
+        let saved: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+        assert_eq!(saved["jobs"][0]["status"], "pending", "{saved}");
+        let restored = Controller::new(state_path);
+        assert_eq!(restored.snapshot()["jobs"][0]["status"], "pending");
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name != "source.mp4" && name != "state.json")
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+        restored.close();
+    }
+
+    #[test]
+    fn user_cancel_still_marks_running_file_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(source) = fixture(dir.path()) else {
+            return;
+        };
+        let state_path = dir.path().join("state.json");
+        let owner = Controller::new(state_path.clone());
+        owner.add_paths(vec![source.to_string_lossy().into_owned()]);
+        wait_for(&owner, |s| s["jobs"][0]["status"] == "pending");
+        owner.update_settings(json!({"advanced_enabled":true,"preset":"veryslow","encoder":"software","scale_percent":200}));
+        owner.start_queue(None);
+        wait_for(&owner, |s| s["jobs"][0]["status"] == "running");
+        owner.cancel_current();
+        wait_for(&owner, |s| s["running"] == false);
+        owner.close();
+        let restored = Controller::new(state_path);
+        assert_eq!(restored.snapshot()["jobs"][0]["status"], "cancelled");
+        restored.close();
     }
 }
