@@ -35,7 +35,7 @@ $results = foreach ($check in $checks) {
     }
 
     # A check that throws leaves the app open, and the single-instance lock would then hand the next launch to it.
-    Get-Process blubberbound, msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process blubberbound, msedgewebview2, ffmpeg, ffprobe -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
     Write-Host '::endgroup::'
 

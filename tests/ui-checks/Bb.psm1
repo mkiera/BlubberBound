@@ -72,7 +72,8 @@ function Stop-Bb {
     Get-Process blubberbound -ErrorAction SilentlyContinue | ForEach-Object {
         if (-not $_.WaitForExit(0)) { $_.Kill(); $_.WaitForExit($TimeoutSeconds * 1000) | Out-Null }
     }
-    Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # FFmpeg and WebView2 children outlive a killed app and keep its data folder as their working directory.
+    Get-Process msedgewebview2, ffmpeg, ffprobe -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
 function Get-BbWindow {
