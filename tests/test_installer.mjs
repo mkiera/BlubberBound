@@ -31,3 +31,17 @@ test('packaging stages the renamed executable and emits no portable or checksum 
   assert.doesNotMatch(packaging, /Compress-Archive|SHA256SUMS|Portable\.zip/);
   assert.doesNotMatch(staging, /normalizeZipTimes/);
 });
+
+test('launched programs do not hold the payload folder as their working directory', () => {
+  const section = name => installer.split(`[${name}]`)[1].split(/^\[/m)[0];
+  const entries = ['Icons', 'Run'].flatMap(name => section(name).split(/\r?\n/).filter(line => line.startsWith('Name:') || line.startsWith('Filename:')));
+  assert.equal(entries.length, 3);
+  for (const entry of entries) assert.match(entry, /; WorkingDir: "\{app\}"(;|$)/);
+  const main = readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
+  const setup = main.slice(main.indexOf('.setup('));
+  assert.match(setup, /let directory=std::path::absolute\(&directory\)\?;/);
+  const change = setup.indexOf('std::env::set_current_dir(&directory)');
+  assert.ok(setup.indexOf('std::path::absolute(&directory)') < setup.indexOf('Controller::new('));
+  assert.ok(change > setup.indexOf('queue.add_paths(files)'), 'relative file arguments resolve before the change');
+  assert.ok(change < setup.indexOf('updater.start()'));
+});

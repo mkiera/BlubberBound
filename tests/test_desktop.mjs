@@ -40,3 +40,17 @@ test('each desktop page loads the native bridge before application scripts', () 
         assert.ok(html.indexOf('src="desktop.js"') < html.indexOf('src="script.js"'));
     }
 });
+
+test('a second launch focuses the running copy before other plugins load', () => {
+    const main = fs.readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
+    const cargo = fs.readFileSync(new URL('../src-tauri/Cargo.toml', import.meta.url), 'utf8');
+    assert.match(cargo, /^tauri-plugin-single-instance = "2/m);
+    const single = main.indexOf('tauri_plugin_single_instance::init');
+    assert.ok(single > 0);
+    assert.ok(single < main.indexOf('tauri_plugin_dialog::init()'));
+    assert.ok(single < main.indexOf('tauri_plugin_opener::init()'));
+    const callback = main.slice(single, main.indexOf('tauri_plugin_dialog::init()'));
+    assert.match(callback, /launch_args\(argv/);
+    assert.match(callback, /queue\.add_paths\(files\)/);
+    assert.match(callback, /set_focus\(\)/);
+});

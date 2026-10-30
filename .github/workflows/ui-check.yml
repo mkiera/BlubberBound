@@ -1,0 +1,77 @@
+name: UI Check
+
+# Runs the app on a clean GitHub Windows machine, drives it with the scripts in tests/ui-checks
+# and uploads screenshots, so a change can be checked in the running app without a desktop.
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: Check name wildcard (file name in tests/ui-checks/checks without .ps1)
+        default: '*'
+  push:
+    branches: ['**', '!main']
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'screenshots/**'
+
+concurrency:
+  group: ui-check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ui:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      BLUBBERBOUND_FFMPEG: ${{ github.workspace }}\tools\ffmpeg.exe
+      BLUBBERBOUND_FFPROBE: ${{ github.workspace }}\tools\ffprobe.exe
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Screen size
+        shell: pwsh
+        run: |
+          # The runner's screen starts at 1024x768, smaller than the app's 1080-pixel minimum height.
+          try { Set-DisplayResolution -Width 1920 -Height 1200 -Force -ErrorAction Stop } catch { Write-Host "Set-DisplayResolution failed: $_" }
+          Add-Type -AssemblyName System.Windows.Forms
+          Write-Host "screen: $([System.Windows.Forms.SystemInformation]::VirtualScreen)"
+
+      - run: npm ci
+      - name: Stamp branch build
+        run: node scripts/build-identity.mjs --alpha
+      - name: Build the app
+        shell: pwsh
+        run: |
+          ./prepare_tools.ps1
+          npm run tauri -- build --no-bundle --config src-tauri/build-config.json -- --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Application build failed.' }
+
+      - name: Run UI checks
+        shell: pwsh
+        run: |
+          $filter = '${{ github.event.inputs.filter }}'
+          if (-not $filter) { $filter = '*' }
+          ./tests/ui-checks/Invoke-UiChecks.ps1 -AppPath src-tauri/target/release/blubberbound.exe -OutDir ui-results -Filter $filter
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-check-results
+          path: ui-results
+          retention-days: 14
+          if-no-files-found: warn
