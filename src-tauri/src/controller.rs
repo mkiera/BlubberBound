@@ -394,7 +394,10 @@ impl Controller {
         match checked_settings(&candidate) {
             Ok(checked) => {
                 let folder = text(&checked, "output_dir");
-                if !folder.is_empty() && !Path::new(&folder).is_dir() {
+                if folder != text(&s.settings, "output_dir")
+                    && !folder.is_empty()
+                    && !Path::new(&folder).is_dir()
+                {
                     s.error = "The output folder is unavailable. Choose another folder.".into();
                     return;
                 }
@@ -420,6 +423,18 @@ impl Controller {
                     && only.as_ref().map_or(true, |id| j["id"] == *id)
             }) {
                 s.error = "Add files or retry a failed item first.".into();
+                return;
+            }
+            let folder = text(&s.settings, "output_dir");
+            if !folder.is_empty()
+                && !Path::new(&folder).is_dir()
+                && s.jobs.iter().any(|j| {
+                    matches!(j["status"].as_str(), Some("pending" | "probing"))
+                        && only.as_ref().map_or(true, |id| j["id"] == *id)
+                        && !s.replacements.contains_key(&text(j, "id"))
+                })
+            {
+                s.error = "The output folder is unavailable. Choose another folder or use each file’s original folder.".into();
                 return;
             }
             s.running = true;
@@ -876,6 +891,39 @@ mod tests {
         owner.update_settings(json!({"target_mb":-1}));
         assert_eq!(owner.snapshot()["settings"]["target_mb"], 10);
         assert!(!text(&owner.snapshot(), "error").is_empty());
+    }
+    #[test]
+    fn missing_saved_output_folder_allows_settings_and_refuses_start_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let missing = dir.path().join("unplugged");
+        let jobs: Vec<Value> = ["a.mp4", "b.mp4"]
+            .iter()
+            .map(|name| json!({"source":dir.path().join(name),"status":"pending","kind":"video"}))
+            .collect();
+        fs::write(
+            &path,
+            json!({"settings":{"output_dir":missing},"jobs":jobs}).to_string(),
+        )
+        .unwrap();
+        let owner = Controller::new(path);
+        owner.update_settings(json!({"target_mb":25}));
+        let state = owner.snapshot();
+        assert_eq!(state["settings"]["target_mb"], 25.0, "{state}");
+        assert_eq!(state["error"], "");
+        owner.update_settings(json!({"output_dir":dir.path().join("also-missing")}));
+        assert!(text(&owner.snapshot(), "error").contains("output folder"));
+        assert_eq!(owner.snapshot()["settings"]["output_dir"], json!(missing));
+        owner.start_queue(None);
+        let state = owner.snapshot();
+        assert_eq!(state["running"], false);
+        assert!(text(&state, "error").contains("output folder"), "{state}");
+        assert!(state["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|job| job["status"] == "pending"));
+        owner.close();
     }
     #[test]
     fn installer_reservation_blocks_processing() {

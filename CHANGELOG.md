@@ -4,6 +4,7 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+- Allow settings changes when the saved output folder is missing, and refuse to start the queue once with a clear message instead of failing each file.
 - Fix Auto quality failing for videos saved to a folder whose path contains an apostrophe, comma, semicolon or square bracket.
 
 ## 1.1.1 - 2026-09-18
