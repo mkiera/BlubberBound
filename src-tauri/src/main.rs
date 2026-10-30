@@ -300,7 +300,8 @@ fn launch_args(
 }
 
 // The single-instance plugin creates its mutex before its message window, so launches in between would each start a copy.
-fn startup_lock(path: &Path, wait: Duration) -> Option<std::fs::File> {
+// Err means another launch still holds the lock. A lock file that cannot be opened for another reason gives Ok(None).
+fn startup_lock(path: &Path, wait: Duration) -> Result<Option<std::fs::File>, ()> {
     let until = std::time::Instant::now() + wait;
     loop {
         let mut options = std::fs::OpenOptions::new();
@@ -308,9 +309,11 @@ fn startup_lock(path: &Path, wait: Duration) -> Option<std::fs::File> {
         #[cfg(windows)]
         std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0);
         match options.open(path) {
-            Ok(file) => return Some(file),
+            Ok(file) => return Ok(Some(file)),
+            // 32 = ERROR_SHARING_VIOLATION
+            Err(error) if error.raw_os_error() != Some(32) => return Ok(None),
             Err(_) if std::time::Instant::now() < until => std::thread::sleep(Duration::from_millis(50)),
-            Err(_) => return None,
+            Err(_) => return Err(()),
         }
     }
 }
@@ -330,7 +333,10 @@ fn main() {
     // A --state-dir copy keeps its own queue, so it may run beside the normal copy.
     if state_override.is_none() {
         let name = format!("{}-startup.lock", profile["storage_id"].as_str().unwrap_or("BlubberBound"));
-        startup = startup_lock(&std::env::temp_dir().join(name), Duration::from_secs(10));
+        match startup_lock(&std::env::temp_dir().join(name), Duration::from_secs(10)) {
+            Ok(lock) => startup = lock,
+            Err(()) => std::process::exit(1),
+        }
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let (files, _) = launch_args(argv.into_iter().skip(1), Path::new(&cwd));
             if !files.is_empty() {
@@ -412,15 +418,17 @@ mod tests {
     #[test]
     fn startup_lock_holds_later_launches_until_released() {
         let path = std::env::temp_dir().join(format!("blubberbound-lock-test-{}", std::process::id()));
-        let first = startup_lock(&path, Duration::ZERO).unwrap();
-        assert!(startup_lock(&path, Duration::from_millis(200)).is_none());
+        let first = startup_lock(&path, Duration::ZERO).unwrap().unwrap();
+        assert!(startup_lock(&path, Duration::from_millis(200)).is_err());
         let waiting = {
             let path = path.clone();
-            std::thread::spawn(move || startup_lock(&path, Duration::from_secs(5)).is_some())
+            std::thread::spawn(move || matches!(startup_lock(&path, Duration::from_secs(5)), Ok(Some(_))))
         };
         std::thread::sleep(Duration::from_millis(200));
         drop(first);
         assert!(waiting.join().unwrap());
         let _ = std::fs::remove_file(path);
+        let unopenable = std::env::temp_dir().join("blubberbound-missing-folder").join("startup.lock");
+        assert!(matches!(startup_lock(&unopenable, Duration::ZERO), Ok(None)));
     }
 }
