@@ -299,6 +299,22 @@ fn launch_args(
     (files, state_override)
 }
 
+// The single-instance plugin creates its mutex before its message window, so launches in between would each start a copy.
+fn startup_lock(path: &Path, wait: Duration) -> Option<std::fs::File> {
+    let until = std::time::Instant::now() + wait;
+    loop {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true);
+        #[cfg(windows)]
+        std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0);
+        match options.open(path) {
+            Ok(file) => return Some(file),
+            Err(_) if std::time::Instant::now() < until => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => return None,
+        }
+    }
+}
+
 fn main() {
     let profile: Value =
         serde_json::from_str(include_str!("../../app_profile.json")).expect("Invalid app profile");
@@ -310,8 +326,11 @@ fn main() {
         &std::env::current_dir().unwrap_or_default(),
     );
     let mut builder = tauri::Builder::default();
+    let mut startup = None;
     // A --state-dir copy keeps its own queue, so it may run beside the normal copy.
     if state_override.is_none() {
+        let name = format!("{}-startup.lock", profile["storage_id"].as_str().unwrap_or("BlubberBound"));
+        startup = startup_lock(&std::env::temp_dir().join(name), Duration::from_secs(10));
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let (files, _) = launch_args(argv.into_iter().skip(1), Path::new(&cwd));
             if !files.is_empty() {
@@ -332,6 +351,7 @@ fn main() {
     builder.plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![desktop_command])
         .setup(move|app|{
+            drop(startup);
             let directory=if let Some(directory)=state_override {directory} else {
                 let base=std::env::var_os("LOCALAPPDATA").map(PathBuf::from).or_else(||app.path().local_data_dir().ok()).unwrap_or_else(std::env::temp_dir);
                 base.join(profile["storage_id"].as_str().unwrap_or("BlubberBound"))
@@ -387,5 +407,20 @@ mod tests {
             ]
         );
         assert_eq!(state, Some(PathBuf::from("state")));
+    }
+
+    #[test]
+    fn startup_lock_holds_later_launches_until_released() {
+        let path = std::env::temp_dir().join(format!("blubberbound-lock-test-{}", std::process::id()));
+        let first = startup_lock(&path, Duration::ZERO).unwrap();
+        assert!(startup_lock(&path, Duration::from_millis(200)).is_none());
+        let waiting = {
+            let path = path.clone();
+            std::thread::spawn(move || startup_lock(&path, Duration::from_secs(5)).is_some())
+        };
+        std::thread::sleep(Duration::from_millis(200));
+        drop(first);
+        assert!(waiting.join().unwrap());
+        let _ = std::fs::remove_file(path);
     }
 }
