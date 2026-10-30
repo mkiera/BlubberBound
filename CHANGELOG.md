@@ -4,6 +4,8 @@ Release headings use the complete version without a leading `v`. Tagged sections
 
 ## Unreleased
 
+## 1.1.2-beta.1 - 2026-10-30
+
 - Remove downloaded update installers, unfinished downloads and old update logs when the app starts, and finish removing an unfinished download when the app closes during it.
 - Fix updates that stopped with "The application files are still in use" while FlipperClipper or a player opened from the app was still running.
 - Fix in-app update downloads that stopped after two minutes on slower connections. A download now fails only when it stalls for two minutes or runs longer than one hour.
