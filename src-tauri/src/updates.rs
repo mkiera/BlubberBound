@@ -787,6 +787,40 @@ fn launch_installer(path: &Path, folder: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+fn prune_updates(folder: &Path) {
+    let Ok(entries) = fs::read_dir(folder) else {
+        return;
+    };
+    let mut files = vec![];
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        let log = name.starts_with("update-") && name.ends_with(".log");
+        let download = name.ends_with("-setup.exe")
+            || (name.starts_with('.') && (name.ends_with(".part") || name.ends_with(".zip")));
+        let modified = fs::symlink_metadata(entry.path())
+            .ok()
+            .filter(|m| m.is_file())
+            .and_then(|m| m.modified().ok());
+        if let (true, Some(modified)) = (log || download, modified) {
+            files.push((log, modified, entry.path()));
+        }
+    }
+    let newest_log = files
+        .iter()
+        .filter(|(log, ..)| *log)
+        .map(|(_, modified, _)| *modified)
+        .max();
+    for (log, modified, path) in files {
+        // A recent file can belong to a running installer or another copy's download.
+        let recent = modified
+            .elapsed()
+            .map_or(true, |age| age < Duration::from_secs(600));
+        if !recent && !(log && Some(modified) == newest_log) {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 struct State {
     preferences: Value,
     rows: Vec<Value>,
@@ -810,6 +844,7 @@ struct Inner {
     cache: Mutex<HashMap<String, (f64, Value)>>,
     closed: AtomicBool,
     cancel: AtomicBool,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 #[derive(Clone)]
 pub struct Updater {
@@ -838,6 +873,7 @@ impl Updater {
             preferences["last_seen"] = json!(running);
         }
         let identity = json!({"version":running,"commit":"","branch":"","run_id":""});
+        prune_updates(&data_dir.join("updates"));
         let updater = Self {
             inner: Arc::new(Inner {
                 profile: profile.clone(),
@@ -847,6 +883,7 @@ impl Updater {
                 cache: Mutex::new(HashMap::new()),
                 closed: AtomicBool::new(false),
                 cancel: AtomicBool::new(false),
+                worker: Mutex::new(None),
                 state: Mutex::new(State {
                     preferences,
                     rows: vec![],
@@ -1091,7 +1128,7 @@ impl Updater {
         self.inner.cancel.store(false, Ordering::Relaxed);
         let this = self.clone();
         let id = id.to_owned();
-        thread::spawn(move || {
+        let worker = thread::spawn(move || {
             let result = if let Some(path) = cached {
                 Ok(path)
             } else {
@@ -1122,6 +1159,7 @@ impl Updater {
                 }
             }
         });
+        *self.inner.worker.lock().unwrap() = Some(worker);
         Ok(())
     }
     pub fn poll_ready_install(&self) -> Option<PathBuf> {
@@ -1210,6 +1248,11 @@ impl Updater {
     pub fn close(&self) {
         self.inner.closed.store(true, Ordering::Relaxed);
         self.inner.cancel.store(true, Ordering::Relaxed);
+        let worker = self.inner.worker.lock().unwrap().take();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while worker.as_ref().is_some_and(|w| !w.is_finished()) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 
@@ -1714,6 +1757,67 @@ Connection: close
         assert_eq!(updater.snapshot()["download"]["active"], true);
         updater.defer_install();
         assert!(path.is_file());
+    }
+    #[test]
+    fn startup_removes_stale_update_files_and_keeps_newest_log() {
+        let folder = tempfile::tempdir().unwrap();
+        let updates = folder.path().join("updates");
+        fs::create_dir_all(&updates).unwrap();
+        let hour = SystemTime::now() - Duration::from_secs(3600);
+        let write = |name: &str, modified: SystemTime| {
+            let path = updates.join(name);
+            fs::write(&path, b"MZ").unwrap();
+            File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(modified)
+                .unwrap();
+        };
+        let stale = [
+            "release-1a-Setup.exe",
+            ".alpha-2b-Setup.exe.part",
+            ".alpha-2b-Setup.exe.zip",
+            "update-old.log",
+        ];
+        for name in stale {
+            write(name, hour);
+        }
+        write("update-newest.log", hour + Duration::from_secs(60));
+        write(".release-3c-Setup.exe.part", SystemTime::now());
+        write("release-4d-Setup.exe", SystemTime::now());
+        write("notes.txt", hour);
+        let _updater = Updater::new(profile(), folder.path().to_owned(), "1.0.0".into());
+        let mut left: Vec<_> = fs::read_dir(&updates)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                ".release-3c-Setup.exe.part",
+                "notes.txt",
+                "release-4d-Setup.exe",
+                "update-newest.log"
+            ]
+        );
+    }
+    #[test]
+    fn close_waits_for_download_cleanup() {
+        let folder = tempfile::tempdir().unwrap();
+        let updater = Updater::new(profile(), folder.path().to_owned(), "1.0.0".into());
+        let marker = folder.path().join("cleaned");
+        let (inner, path) = (updater.inner.clone(), marker.clone());
+        *updater.inner.worker.lock().unwrap() = Some(thread::spawn(move || {
+            while !inner.cancel.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(5));
+            }
+            thread::sleep(Duration::from_millis(300));
+            fs::write(path, b"").unwrap();
+        }));
+        updater.close();
+        assert!(marker.is_file());
     }
     #[test]
     fn installer_path_requires_validated_file_in_updates_folder() {
