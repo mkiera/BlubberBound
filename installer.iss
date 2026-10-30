@@ -67,14 +67,14 @@ Source: "{#PayloadRoot}\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesu
 Name: "{app}\app"; BeforeInstall: BackupPayload
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\app\{#Executable}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\app\{#Executable}"; Tasks: desktopicon
+Name: "{group}\{#AppName}"; Filename: "{app}\app\{#Executable}"; WorkingDir: "{app}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\app\{#Executable}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\{#Executable}"; ValueType: string; ValueData: "{app}\app\{#Executable}"; Flags: uninsdeletekey
 
 [Run]
-Filename: "{app}\app\{#Executable}"; Flags: nowait runasoriginaluser
+Filename: "{app}\app\{#Executable}"; WorkingDir: "{app}"; Flags: nowait runasoriginaluser
 
 [Code]
 var

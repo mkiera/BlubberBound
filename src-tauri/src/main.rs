@@ -302,7 +302,10 @@ fn main() {
                 base.join(profile["storage_id"].as_str().unwrap_or("BlubberBound"))
             };
             std::fs::create_dir_all(&directory)?;
+            let directory=std::path::absolute(&directory)?;
             let queue=Controller::new(directory.join("state.json"));if !files.is_empty(){queue.add_paths(files);}
+            // Programs started from here inherit the working directory, and one inside {app}\app blocks the installer's rename.
+            let _=std::env::set_current_dir(&directory);
             let updater=updates::Updater::new(profile.clone(),directory,version.clone());
             if let Some(identity)=option_env!("BLUBBERBOUND_BUILD_IDENTITY_JSON").and_then(|value|serde_json::from_str(value).ok()){updater.set_identity(identity);}
             updater.start();
