@@ -132,10 +132,11 @@ function Invoke-BbElement {
     param([Parameter(ValueFromPipeline)]$Element)
     process {
         $p = $null
-        if (-not $Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$p)) {
-            throw "element '$($Element.Current.Name)' cannot be invoked"
-        }
-        $p.Invoke(); Start-Sleep -Milliseconds 600
+        if ($Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$p)) { $p.Invoke() }
+        # Buttons with aria-pressed, such as the size presets, are toggle buttons to UI Automation.
+        elseif ($Element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$p)) { $p.Toggle() }
+        else { throw "element '$($Element.Current.Name)' cannot be invoked" }
+        Start-Sleep -Milliseconds 600
     }
 }
 
